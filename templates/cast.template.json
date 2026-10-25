@@ -1,0 +1,16 @@
+{
+  "_note": "配角模板。放成 data/cast.json。presence.places 决定这个角色能出现在哪些地点；不在场时模型必须标 remote。",
+  "cast": [
+    {
+      "id": "（英文 id，如 roommate）",
+      "displayName": "（名字）",
+      "relation": "（和主角的关系）",
+      "notes": "（身份、性格、和主角的互动模式）",
+      "presence": {
+        "places": [
+          "home"
+        ]
+      }
+    }
+  ]
+}

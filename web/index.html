@@ -1,0 +1,1058 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>摹影 · 角色扮演引擎控制台</title>
+<style>
+  :root {
+    --bg:#0f1115; --panel:#171a21; --panel2:#0d1016; --line:#252a34;
+    --fg:#e6e9ef; --dim:#9aa3b2; --accent:#7cc4ff;
+    --ok:#5fd38d; --warn:#f5c86b; --err:#f2777a;
+  }
+  :root[data-theme="light"] {
+    --bg:#f4f6f9; --panel:#ffffff; --panel2:#f8fafc; --line:#dfe4ec;
+    --fg:#1b1f27; --dim:#667085; --accent:#1f7ae0;
+    --ok:#1a9d5c; --warn:#b7791f; --err:#c0392b;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.6 system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; }
+  header { padding:12px 18px; border-bottom:1px solid var(--line); display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
+  header h1 { margin:0; font-size:16px; font-weight:600; }
+  .spacer { flex:1; }
+  .badge { padding:2px 9px; border-radius:20px; font-size:12px; border:1px solid var(--line); background:var(--panel); }
+  .badge.on { color:var(--ok); } .badge.off { color:var(--err); }
+  nav { display:flex; gap:6px; padding:10px 18px 0; flex-wrap:wrap; }
+  nav button { background:transparent; border:1px solid var(--line); color:var(--dim); padding:5px 12px; border-radius:8px; cursor:pointer; font-size:13px; }
+  nav button.active { background:var(--panel); color:var(--fg); border-color:var(--accent); }
+  main { padding:14px 18px 40px; max-width:1120px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px 16px; margin-bottom:12px; }
+  .card h2 { margin:0 0 10px; font-size:14px; font-weight:600; color:var(--accent); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:10px; }
+  label { display:block; font-size:12px; color:var(--dim); margin-bottom:3px; }
+  input,textarea,select { width:100%; background:var(--panel2); border:1px solid var(--line); color:var(--fg); border-radius:6px; padding:7px 9px; font:inherit; }
+  textarea { min-height:80px; resize:vertical; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; }
+  button.act { background:var(--accent); color:#fff; border:0; padding:7px 16px; border-radius:6px; cursor:pointer; font-weight:600; }
+  button.ghost { background:transparent; border:1px solid var(--line); color:var(--fg); padding:7px 14px; border-radius:6px; cursor:pointer; }
+  button.sm { padding:4px 10px; font-size:12px; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:10px; }
+  pre { background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:12px; overflow:auto; max-height:320px; font-size:12px; }
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  th,td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); }
+  th { color:var(--dim); font-weight:500; }
+  .muted { color:var(--dim); font-size:12px; }
+  .tag { display:inline-block; padding:1px 7px; border-radius:4px; font-size:11px; background:var(--panel2); border:1px solid var(--line); }
+  .tag.sent { color:var(--ok); } .tag.hard { color:var(--err); } .tag.soft { color:var(--warn); }
+  .hide { display:none; }
+  .toast { position:fixed; right:18px; bottom:18px; background:var(--panel); border:1px solid var(--accent); padding:10px 16px; border-radius:8px; z-index:99; }
+  .stage-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:10px; }
+  .stage { border:1px solid var(--line); border-radius:10px; padding:12px; cursor:pointer; background:var(--panel2); }
+  .stage:hover { border-color:var(--accent); }
+  .stage.active { border-color:var(--accent); background:var(--panel); }
+  .stage b { display:block; font-size:15px; margin-bottom:4px; }
+  .stage span { font-size:12px; color:var(--dim); }
+  .sticker-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(130px,1fr)); gap:10px; }
+  .sticker { border:1px solid var(--line); border-radius:8px; padding:8px; background:var(--panel2); }
+  .sticker img { width:100%; height:96px; object-fit:contain; background:var(--panel); border-radius:6px; }
+  .sticker .desc { font-size:11px; margin-top:6px; min-height:28px; }
+  .sticker .ops { display:flex; gap:4px; margin-top:6px; }
+  .cast-item { border:1px solid var(--line); border-radius:8px; padding:10px; margin-bottom:8px; background:var(--panel2); }
+</style>
+</head>
+<body>
+<header>
+  <h1>摹影 · 角色扮演引擎</h1>
+  <span class="badge" id="b-conn">连接中…</span>
+  <span class="badge" id="b-place">—</span>
+  <span class="badge" id="b-stage">—</span>
+  <span class="spacer"></span>
+  <button class="ghost sm" id="btn-theme">🌙 夜间</button>
+</header>
+
+<nav>
+  <button class="active" data-tab="state">状态</button>
+  <button data-tab="relation">感情阶段</button>
+  <button data-tab="character">角色卡</button>
+  <button data-tab="cast">其他角色</button>
+  <button data-tab="user">用户与关系</button>
+  <button data-tab="config">API 配置</button>
+  <button data-tab="world">世界</button>
+  <button data-tab="stickers">表情包</button>
+  <button data-tab="export">故事导出</button>
+  <button data-tab="backup">备份与恢复</button>
+  <button data-tab="ledger">账本</button>
+</nav>
+
+<main>
+  <section id="tab-state">
+    <div class="card">
+      <h2>世界状态（程序推导，可信）</h2>
+      <pre id="world-block">加载中…</pre>
+    </div>
+    <div class="card">
+      <h2>最近事件</h2>
+      <table id="events-table"><tbody></tbody></table>
+    </div>
+    <div class="card">
+      <h2>手动干预</h2>
+      <div class="row">
+        <button class="act" id="btn-advance">立即推进一个独立生活回合</button>
+        <span class="muted">走与用户回合完全相同的校验路径</span>
+      </div>
+      <pre id="advance-out" class="hide"></pre>
+    </div>
+  </section>
+
+  <section id="tab-relation" class="hide">
+    <div class="card">
+      <h2>她对你的感情态度（一键切换）</h2>
+      <p class="muted">切换会立刻改写她对你的印象分数，并同步改变说话方式（陌生时话极少，依赖时才碎碎念）。</p>
+      <div class="stage-grid" id="stage-grid"></div>
+      <div class="row">
+        <span class="muted">当前：<b id="stage-current">—</b></span>
+        <span class="muted">初始（重置基线）：<b id="stage-initial">—</b></span>
+      </div>
+      <div class="row">
+        <button class="ghost" id="btn-reset-stage">把当前阶段重置为初始阶段</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>印象分数</h2>
+      <pre id="facets-out">—</pre>
+    </div>
+  </section>
+
+  <section id="tab-character" class="hide">
+    <div class="card">
+      <h2>AI 整理导入（需要 story 路由）</h2>
+      <p class="muted">粘贴一段原始角色设定，交给世界故事 AI 分析整理成结构化配置。必须先配好 story API 并测试通过。</p>
+      <textarea id="import-text" placeholder="把你的角色设定粘贴在这里…" style="min-height:140px"></textarea>
+      <div class="row">
+        <button class="act" id="btn-import-analyze">AI 分析整理</button>
+        <button class="ghost" id="btn-import-apply" disabled>确认写入</button>
+        <span class="muted" id="import-hint"></span>
+      </div>
+      <pre id="import-preview" class="hide"></pre>
+    </div>
+    <div class="card">
+      <h2>角色卡（可直接编辑 JSON）</h2>
+      <textarea id="character-json" style="min-height:300px"></textarea>
+      <div class="row"><button class="act" id="btn-save-character">保存角色卡</button></div>
+    </div>
+  </section>
+
+  <section id="tab-cast" class="hide">
+    <div class="card">
+      <h2>其他角色卡</h2>
+      <p class="muted">故事里的配角。他们只活在叙事中，发给他们的话只会写进剧本，不会真的送达。</p>
+      <div id="cast-list"></div>
+      <div class="row">
+        <button class="act" id="btn-save-cast">保存</button>
+        <button class="ghost" id="btn-add-cast">新增一个角色</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-user" class="hide">
+    <div class="card">
+      <h2>用户是谁</h2>
+      <div class="grid">
+        <div><label>QQ 号</label><input id="u-id"></div>
+        <div><label>备注名</label><input id="u-nick"></div>
+      </div>
+      <div style="margin-top:10px"><label>他是谁（她视角的描述）</label><textarea id="u-profile"></textarea></div>
+      <div style="margin-top:10px"><label>备注</label><input id="u-note"></div>
+    </div>
+    <div class="card">
+      <h2>关系定位（她和他之间）</h2>
+      <p class="muted">感情的锚点与来历。这块独立于角色卡——角色卡只回答「她是谁」，这里回答「她和这个人到了哪一步」。</p>
+      <div class="grid"><div><label>关系类型（可以是任何人）</label><input id="r-kind" placeholder="老同学 / 朋友 / 恋人 / 故去的亲人 / 同事 / 故事里的人"></div></div>
+      <div style="margin-top:10px"><label>关系锚点（他是谁、她怎么看待这份感情）</label><textarea id="r-anchor" style="min-height:110px"></textarea></div>
+      <div style="margin-top:10px"><label>关系来历</label><textarea id="r-history"></textarea></div>
+      <div class="row">
+        <button class="act" id="btn-save-rel">保存关系</button>
+        <label style="margin:0"><input type="checkbox" id="r-auto" style="width:auto"> 随故事发展自动演进感情阶段</label>
+        <label style="margin:0"><input type="checkbox" id="r-evolve" style="width:auto"> 让世界 AI 按剧情改写各阶段相处方式</label>
+      </div>
+    </div>
+    <div class="card">
+      <h2>初始相处方式（演化的起点）</h2>
+      <p class="muted">只填这一份：两人最开始是怎么相处的。之后每一阶段的内容由<strong>世界 AI 结合剧情</strong>从这里推演出来——不需要你逐档手写，也不会把「收着不说破」这类阶段性条款带到后面去。开源给别人用也一样：换成朋友、故人、故事角色，填这里就够了。</p>
+      <div style="margin-top:10px"><label>最开始的状态</label><input id="r-init-tone"></div>
+      <div style="margin-top:10px"><label>最初的相处方式（每行一条）</label><textarea id="r-init-rules" style="min-height:120px"></textarea></div>
+      <div class="row">
+        <button class="act" id="btn-save-init">保存初始相处方式</button>
+        <button class="ghost" id="btn-reset-tpl">重置为通用模板</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>各阶段：怎么相处、怎么触发（随关系自动切换）</h2>
+      <p class="muted">相处方式属于<strong>每个阶段自己</strong>。默认由世界 AI 在关系进档时按最近剧情重写并标上来源；你也可以展开任意一档手动改，改过之后这一档不再被自动覆盖前提是你手动保存过。点「按最近剧情重写」可随时让 AI 重新推演。</p>
+      <div class="row">
+        <select id="ev-stage"></select>
+        <button class="act" id="btn-evolve">按最近剧情重写</button>
+        <span class="muted" id="ev-hint"></span>
+      </div>
+      <div id="rel-stage-editors"></div>
+    </div>
+    <div class="card">
+      <h2>初始关系（重置基线）</h2>
+      <div class="grid"><div><label>初始阶段</label><select id="u-stage"></select></div></div>
+      <div style="margin-top:10px"><label>初始印象（每行一条）</label><textarea id="u-notes"></textarea></div>
+      <div class="row"><button class="act" id="btn-save-user">保存</button></div>
+    </div>
+  </section>
+
+  <section id="tab-config" class="hide">
+    <div id="cfg-forms"></div>
+    <div class="card">
+      <h2>OneBot / 其他</h2>
+      <div class="grid">
+        <div><label>OneBot WS 地址</label><input id="cfg-wsUrl"></div>
+        <div><label>OneBot HTTP 地址</label><input id="cfg-httpUrl"></div>
+        <div><label>access token</label><input id="cfg-token"></div>
+        <div><label>机器人 QQ（selfId）</label><input id="cfg-selfId"></div>
+        <div><label>自动推进间隔（分钟，0 关闭）</label><input id="cfg-advance" type="number"></div>
+        <div><label>硬矛盾最大重试次数</label><input id="cfg-revision" type="number"></div>
+      </div>
+      <div class="row"><button class="act" id="btn-save-misc">保存</button></div>
+    </div>
+  </section>
+
+  <section id="tab-stickers" class="hide">
+    <div class="card">
+      <h2>导入表情包</h2>
+      <div class="row">
+        <input type="file" id="sticker-file" accept="image/*" style="max-width:260px">
+        <button class="act" id="btn-sticker-upload">上传</button>
+        <span class="muted" id="sticker-hint"></span>
+      </div>
+    </div>
+    <div class="card">
+      <h2>表情库</h2>
+      <p class="muted">导入后用识图模型标注（需要 vision 路由），她才会在合适的时机使用。</p>
+      <div class="sticker-grid" id="sticker-grid"></div>
+    </div>
+  </section>
+
+  <section id="tab-world" class="hide">
+    <div class="card">
+      <h2>世界设定</h2>
+      <div class="grid">
+        <div><label>时代与世界</label>
+          <select id="w-preset">
+            <option value="default">默认（现实世界的时间与地点）</option>
+            <option value="custom">自定义</option>
+          </select>
+        </div>
+        <div><label>时代（仅自定义生效）</label><input id="w-era" placeholder="如：天历三七二年，霜降前后 / 1998 年的南方小镇"></div>
+        <div><label>地点（仅自定义生效）</label><input id="w-location" placeholder="如：架空都城 · 云京"></div>
+      </div>
+      <p class="muted" id="w-resolved">—</p>
+      <div style="margin-top:10px"><label>世界描述</label><textarea id="w-desc" placeholder="这个世界长什么样：有什么、没有什么、日常的质感"></textarea></div>
+      <div class="row"><button class="act" id="btn-save-world">保存世界设定</button></div>
+    </div>
+    <div class="card">
+      <h2>故事要求</h2>
+      <p class="muted">这段生活要写成什么样。默认取自 HDS 的标准：主角有丰富且持续变化的个人生活，配角各有节奏与立场，关系在小事里缓慢发展，允许留下未完成的余波。</p>
+      <textarea id="w-story" style="min-height:96px"></textarea>
+      <div class="row">
+        <button class="act" id="btn-save-story">保存故事要求</button>
+        <button class="ghost" id="btn-reset-story">恢复默认</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>演化节奏与主动联系</h2>
+      <p class="muted">故事每隔多久自己往前走一步；以及她在过自己日子的时候，会不会突然想找他说话。睡着的时候两种都不会打扰他。</p>
+      <div class="grid">
+        <div><label>演化间隔（分钟，0=关闭）</label><input id="w-advance" type="number" min="0" step="1"></div>
+        <div><label>抖动（分钟）</label><input id="w-jitter" type="number" min="0" step="1"></div>
+        <div><label>主动联系冷却（分钟）</label><input id="w-urge-cd" type="number" min="0" step="1"></div>
+        <div style="display:flex;align-items:flex-end">
+          <label style="margin:0"><input type="checkbox" id="w-urge" style="width:auto"> 允许她主动找他</label>
+        </div>
+      </div>
+      <div class="row">
+        <button class="act" id="btn-save-rhythm">保存节奏</button>
+        <span class="muted">间隔改了下一轮生效，不用重启</span>
+      </div>
+    </div>
+    <div class="card">
+      <h2>可播种的外部事件主题</h2>
+      <p class="muted">播种器只从这些主题里取材，保证外部事件不跑偏。</p>
+      <textarea id="w-topics" style="min-height:120px"></textarea>
+      <div class="row"><button class="act" id="btn-save-topics">保存主题</button></div>
+    </div>
+    <div class="card">
+      <h2>事件播种（让世界自己会动）</h2>
+      <p class="muted">播种器周期性生成与她有关的外部事件，落账后主模型才有权书写。绝不牵涉对话参与者，也绝不替她做决定。</p>
+      <div class="row">
+        <button class="act" id="btn-seed">立即播种一次</button>
+        <span class="muted" id="seed-hint"></span>
+      </div>
+      <pre id="seed-out" class="hide"></pre>
+      <div class="row"><span class="muted">播种记录：</span></div>
+      <table id="seeded-table"><thead><tr><th>时间</th><th>重要性</th><th>状态</th><th>内容</th></tr></thead><tbody></tbody></table>
+    </div>
+    <div class="card">
+      <h2>演化游标</h2>
+      <p class="muted">故事推进到哪一刻。每轮只在 [游标, 现在] 这个窗口里演化，绝不跳到未来。</p>
+      <pre id="cursor-out">—</pre>
+    </div>
+  </section>
+
+  <section id="tab-export" class="hide">
+    <div class="card">
+      <h2>导出故事</h2>
+      <div class="grid">
+        <div><label>开始时间（留空=最早）</label><input id="ex-from" type="datetime-local"></div>
+        <div><label>结束时间（留空=现在）</label><input id="ex-to" type="datetime-local"></div>
+      </div>
+      <div class="row">
+        <button class="act" id="btn-export-md">导出 Markdown</button>
+        <button class="ghost" id="btn-export-json">导出 JSON</button>
+        <button class="ghost" id="btn-export-preview">预览</button>
+        <span class="muted" id="export-hint"></span>
+      </div>
+      <pre id="export-out" class="hide"></pre>
+    </div>
+  </section>
+
+  <section id="tab-backup" class="hide">
+    <div class="card">
+      <h2>备份</h2>
+      <p class="muted">把整个 <code>data/</code> 打包：角色卡、关系、世界、时间轴事件、账本、配置（<b>含 API key 与 OneBot token，别随手传公网</b>）。迁服务器或改崩了要回滚，都靠它。</p>
+      <div class="row">
+        <button class="act" id="btn-backup">立即打包备份</button>
+        <span class="muted" id="backup-hint"></span>
+      </div>
+      <table id="backup-table"><thead><tr><th>文件</th><th>大小</th><th>时间</th><th>操作</th></tr></thead><tbody></tbody></table>
+    </div>
+    <div class="card">
+      <h2>恢复</h2>
+      <p class="muted">上传一个之前打的包（<code>.tar.gz</code>），选它点「恢复」即可整体覆盖。恢复前会<b>自动给当前数据先打一个安全包</b>，万一恢复错了还能退回来；恢复完会自动热重载，不用重启容器。</p>
+      <div class="row">
+        <input type="file" id="restore-file" accept=".tar.gz,.tgz,.gz">
+        <button class="act" id="btn-upload">上传备份包</button>
+        <span class="muted" id="restore-hint"></span>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <select id="restore-pick"></select>
+        <button class="act" id="btn-restore">恢复到选中的包</button>
+      </div>
+      <p class="muted" id="restore-info"></p>
+    </div>
+  </section>
+
+  <section id="tab-ledger" class="hide">
+    <div class="card">
+      <h2>投递账本</h2>
+      <table id="ledger-table"><thead><tr><th>时间</th><th>状态</th><th>收件人</th><th>内容</th></tr></thead><tbody></tbody></table>
+    </div>
+    <div class="card">
+      <h2>最近回合</h2>
+      <table id="turns-table"><thead><tr><th>时间</th><th>来源</th><th>阶段</th><th>发送</th><th>拦截</th><th>去重</th></tr></thead><tbody></tbody></table>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = (s) => document.querySelector(s);
+
+// 时间显示统一走这里：后端存的是 UTC ISO 串，直接 slice 会显示成标准时间。
+// 摹影的一切时间都以北京时间（UTC+8）呈现，和故事的时区保持一致。
+const TZ = 'Asia/Shanghai';
+function fmtTime(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return String(iso ?? '');
+  return d.toLocaleTimeString('zh-CN', { timeZone: TZ, hour12: false });
+}
+function fmtTimeSec(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return String(iso ?? '');
+  return d.toLocaleTimeString('zh-CN', { timeZone: TZ, hour12: false });
+}
+function fmtDateTime(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return String(iso ?? '');
+  return d.toLocaleString('zh-CN', {
+    timeZone: TZ, hour12: false, month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit',
+  }).replace(/\//g, '-');
+}
+const ROLES = [
+  ['chat', '对话（气泡、即时回复、表情选择）'],
+  ['story', '故事发展（剧本、矛盾校验、角色卡整理）'],
+  ['vision', '视觉理解（识图、表情包标注）'],
+];
+let WORLD = null;
+let IMPORT_DRAFT = null;
+
+function toast(msg) {
+  const el = document.createElement('div');
+  el.className='toast'; el.textContent=msg;
+  document.body.appendChild(el);
+  setTimeout(()=>el.remove(),2400);
+}
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  const text = await r.text();
+  let data; try { data = text ? JSON.parse(text) : {}; } catch { data = { error: String(text).slice(0,200) }; }
+  if (!r.ok) {
+    if (r.status===401){ toast('登录已失效，正在刷新…'); setTimeout(()=>location.reload(),800); }
+    throw new Error(data?.error ? `HTTP ${r.status}: ${data.error}` : `HTTP ${r.status}`);
+  }
+  return data;
+}
+
+window.addEventListener('error',(e)=>toast('出错了：'+(e?.message??'未知')));
+window.addEventListener('unhandledrejection',(e)=>toast('出错了：'+(e?.reason?.message??e?.reason??'未知')));
+
+// ---------- 主题 ----------
+const THEME_KEY = 'moying-theme';
+function applyTheme(t){
+  document.documentElement.dataset.theme = t;
+  $('#btn-theme').textContent = t === 'light' ? '☀️ 白天' : '🌙 夜间';
+}
+function currentTheme(){
+  const saved = localStorage.getItem(THEME_KEY);
+  if (saved) return saved;
+  return window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+}
+applyTheme(currentTheme());
+$('#btn-theme').onclick = () => {
+  const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+  localStorage.setItem(THEME_KEY, next);
+  applyTheme(next);
+};
+
+// ---------- 状态 ----------
+async function loadState(){
+  const s = await api('/api/state');
+  $('#b-conn').textContent = s.connected ? 'OneBot 已连接' : '未连接';
+  $('#b-conn').className = 'badge ' + (s.connected?'on':'off');
+  $('#b-place').textContent = '她在' + (s.placeLabel||s.place);
+  $('#events-table').querySelector('tbody').innerHTML = (s.recentEvents||[]).map((e)=>`<tr>
+    <td>${fmtTime(e.at)}</td><td><span class="tag">${e.kind}</span></td>
+    <td>${e.place||''}</td><td>${(e.summary||'').slice(0,44)}</td>
+    <td class="muted">${e.source||''}</td></tr>`).join('');
+  $('#world-block').textContent = s.worldBlock;
+  return s;
+}
+
+// ---------- 感情阶段 ----------
+let STAGE_STATE = null;
+async function loadStages(){
+  const d = await api('/api/stages');
+  STAGE_STATE = d;
+  $('#stage-grid').innerHTML = d.stages.map((s)=>`
+    <div class="stage ${s.id===d.current?'active':''}" data-stage="${s.id}">
+      <b>${s.name}</b><span>${s.desc}</span>
+    </div>`).join('');
+  document.querySelectorAll('.stage').forEach((el)=>{ el.onclick = ()=>setStage(el.dataset.stage); });
+  const curName = d.stages.find(s=>s.id===d.current)?.name ?? d.current ?? '—';
+  const initName = d.stages.find(s=>s.id===d.initial)?.name ?? d.initial ?? '—';
+  $('#stage-current').textContent = curName;
+  $('#stage-initial').textContent = initName;
+  $('#b-stage').textContent = '感情：' + curName;
+  $('#facets-out').textContent = JSON.stringify(d.facets ?? {}, null, 2);
+  $('#u-stage').innerHTML = d.stages.map(s=>`<option value="${s.id}">${s.name}</option>`).join('');
+  if (d.initial) $('#u-stage').value = d.initial;
+}
+async function setStage(id){
+  try{
+    await api('/api/stage',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({stage:id})});
+    toast('已切换');
+    await loadStages();
+  }catch(e){ toast('切换失败：'+(e?.message??e)); }
+}
+$('#btn-reset-stage').onclick = async ()=>{
+  if(!STAGE_STATE?.initial) return toast('没有设置初始阶段');
+  await setStage(STAGE_STATE.initial);
+};
+
+// ---------- 角色卡 ----------
+async function loadCharacter(){
+  const { character } = await api('/api/character');
+  $('#character-json').value = JSON.stringify(character ?? {}, null, 2);
+}
+$('#btn-save-character').onclick = async ()=>{
+  try{
+    const character = JSON.parse($('#character-json').value);
+    await api('/api/character',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({character})});
+    toast('角色卡已保存，下一轮生效');
+  }catch(e){ toast('保存失败：'+(e?.message??e)); }
+};
+$('#btn-import-analyze').onclick = async ()=>{
+  const hint = $('#import-hint');
+  hint.textContent = '分析中…（故事模型整理字段，可能要十几秒）';
+  $('#btn-import-apply').disabled = true;
+  try{
+    const r = await api('/api/character/import',{method:'POST',headers:{'content-type':'application/json'},
+      body:JSON.stringify({ text: $('#import-text').value })});
+    $('#import-preview').classList.remove('hide');
+    $('#import-preview').textContent = JSON.stringify(r.draft ?? r, null, 2);
+    if(!r.ok){ hint.textContent = r.errors ? ('结构不完整：'+r.errors.join('；')) : '分析失败'; return; }
+    IMPORT_DRAFT = r.draft;
+    hint.textContent = '分析完成，确认后写入';
+    $('#btn-import-apply').disabled = false;
+  }catch(e){ hint.textContent = '失败：'+(e?.message??e); }
+};
+$('#btn-import-apply').onclick = async ()=>{
+  if(!IMPORT_DRAFT) return;
+  try{
+    await api('/api/character/import',{method:'POST',headers:{'content-type':'application/json'},
+      body:JSON.stringify({ text: $('#import-text').value, apply: true })});
+    toast('已写入角色卡');
+    IMPORT_DRAFT = null;
+    $('#btn-import-apply').disabled = true;
+    await loadCharacter();
+  }catch(e){ toast('写入失败：'+(e?.message??e)); }
+};
+
+// ---------- 配角 ----------
+let CAST = [];
+async function loadCast(){
+  const { cast } = await api('/api/cast');
+  CAST = cast ?? [];
+  renderCast();
+}
+function renderCast(){
+  $('#cast-list').innerHTML = CAST.map((c,i)=>`
+    <div class="cast-item">
+      <div class="grid">
+        <div><label>名字</label><input value="${c.displayName??''}" data-i="${i}" data-k="displayName"></div>
+        <div><label>身份</label><input value="${c.relation??''}" data-i="${i}" data-k="relation"></div>
+        <div><label>标识 id</label><input value="${c.id??''}" data-i="${i}" data-k="id"></div>
+        <div><label>能出现的地点（逗号分隔）</label><input value="${(c.presence?.places??[]).join(',')}" data-i="${i}" data-k="places"></div>
+      </div>
+      <div style="margin-top:8px"><label>设定</label><textarea data-i="${i}" data-k="notes">${c.notes??''}</textarea></div>
+      <div class="row"><button class="ghost sm" data-del="${i}">删除</button>
+        <label style="margin:0"><input type="checkbox" data-i="${i}" data-k="remoteOnly" ${c.presence?.remoteOnly?'checked':''} style="width:auto"> 只能远程联系</label></div>
+    </div>`).join('');
+  $('#cast-list').querySelectorAll('input,textarea').forEach((el)=>{
+    el.oninput = ()=>{
+      const i = Number(el.dataset.i), k = el.dataset.k, c = CAST[i];
+      if(k==='places'){ c.presence = {...(c.presence||{})}; c.presence.places = el.value.split(',').map(s=>s.trim()).filter(Boolean); }
+      else if(k==='remoteOnly'){ c.presence = {...(c.presence||{})}; c.presence.remoteOnly = el.checked; }
+      else c[k] = el.value;
+    };
+  });
+  $('#cast-list').querySelectorAll('[data-del]').forEach((b)=>{
+    b.onclick = ()=>{ CAST.splice(Number(b.dataset.del),1); renderCast(); };
+  });
+}
+$('#btn-add-cast').onclick = ()=>{ CAST.push({id:'', displayName:'新角色', relation:'', notes:'', presence:{places:[]}}); renderCast(); };
+$('#btn-save-cast').onclick = async ()=>{
+  try{
+    await api('/api/cast',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({cast:CAST})});
+    toast('配角已保存');
+    await loadCast();
+  }catch(e){ toast('保存失败：'+(e?.message??e)); }
+};
+
+// ---------- 用户 ----------
+async function loadUser(){
+  const { user } = await api('/api/user');
+  $('#u-id').value = user?.userId ?? '';
+  $('#u-nick').value = user?.nickname ?? '';
+  $('#u-profile').value = user?.profile ?? '';
+  $('#u-note').value = user?.note ?? '';
+  const rel = user?.initialRelationship ?? {};
+  if(rel.stage) $('#u-stage').value = rel.stage;
+  $('#u-notes').value = (rel.notes ?? []).join('\n');
+}
+// ---------- 关系 ----------
+let REL = null;
+async function loadRelationship(){
+  const { relationship } = await api('/api/relationship');
+  REL = relationship ?? {};
+  $('#r-anchor').value = REL.anchor ?? '';
+  $('#r-history').value = REL.history ?? '';
+  $('#r-kind').value = REL.kind ?? '';
+  $('#r-auto').checked = REL.autoAdvance !== false;
+  $('#r-evolve').checked = REL.autoEvolve !== false;
+  const init = REL.initialMode ?? {};
+  $('#r-init-tone').value = init.tone ?? '';
+  $('#r-init-rules').value = (init.behaviorRules ?? []).join('\n');
+  $('#ev-stage').innerHTML = (REL.stages ?? []).map((s)=>`<option value="${s.id}">${s.name}</option>`).join('');
+  const cur = REL.currentStage ?? '';
+  if (cur) $('#ev-stage').value = cur;
+  $('#rel-stage-editors').innerHTML = (REL.stages ?? []).map((s)=>{
+    const limits = s.speech ? `单条≤${s.speech.maxChars}字 · 一轮≤${s.speech.maxBubbles}条 · 总≤${s.speech.maxTotalChars}字` : '';
+    return `<details class="cast-item" ${s.id===cur?'open':''}>
+      <summary><b>${s.name}</b>
+        ${s.id===cur ? '<span class="tag sent">当前</span>' : ''}
+        <span class="muted">${limits}</span>
+      </summary>
+      <div style="margin-top:8px"><label>现在的状态</label><input data-stage="${s.id}" data-k="tone" value="${(s.tone??'').replace(/"/g,'&quot;')}"></div>
+      <div style="margin-top:8px"><label>相处方式（每行一条）</label><textarea data-stage="${s.id}" data-k="rules" style="min-height:110px">${(s.behaviorRules??[]).join('\n')}</textarea></div>
+      <div style="margin-top:8px"><label>特殊触发（每行一条，格式：他做了什么 =&gt; 她怎么反应）</label><textarea data-stage="${s.id}" data-k="triggers" style="min-height:110px">${(s.specialTriggers??[]).map(t=>`${t.when||''} => ${t.react||''}`).join('\n')}</textarea></div>
+      <div class="muted" style="margin-top:6px">可以做到的：${(s.allow ?? []).join('；') || '—'}　|　仍然不做的：${(s.forbid ?? []).join('；') || '—'}${(s.relaxKeywords ?? []).length ? `　|　解除红线：<b>${s.relaxKeywords.join('、')}</b>` : ''}</div>
+      ${s.evolvedAt ? `<div class="muted">来源：<b>${s.evolvedFrom === 'initialMode' ? '初始相处方式' : (s.evolvedFrom ?? '—')}</b> · 演化于 ${String(s.evolvedAt).slice(0,16).replace('T',' ')}</div>` : '<div class="muted">来源：手写（未经过 AI 演化）</div>'}
+    </details>`;
+  }).join('');
+}
+$('#btn-save-rel').onclick = async ()=>{
+  try{
+    // 每个阶段自己的相处方式与触发：随关系演进自动切换，不用手动搬
+    const stages = (REL?.stages ?? []).map((st)=>{
+      const q = (k) => document.querySelector(`[data-stage="${st.id}"][data-k="${k}"]`);
+      const next = { ...st };
+      if (q('tone')) { next.tone = q('tone').value.trim(); next.manual = true; }
+      if (q('rules')) next.behaviorRules = q('rules').value.split('\n').map((x)=>x.trim()).filter(Boolean);
+      if (q('triggers')) {
+        next.specialTriggers = q('triggers').value.split('\n').map((line)=>{
+          const i = line.indexOf('=>');
+          if (i < 0) return null;
+          const when = line.slice(0, i).trim().replace(/^当/, '');
+          const react = line.slice(i + 2).trim();
+          if (!when || !react) return null;
+          const old = (st.specialTriggers ?? []).find((t)=>t.when === when);
+          return { when, react, ...(old?.note ? { note: old.note } : {}) };
+        }).filter(Boolean);
+      }
+      return next;
+    });
+    const relationship = {
+      ...(REL ?? {}),
+      kind: $('#r-kind').value,
+      anchor: $('#r-anchor').value,
+      history: $('#r-history').value,
+      stages,
+      autoAdvance: $('#r-auto').checked,
+      autoEvolve: $('#r-evolve').checked,
+    };
+    await api('/api/relationship',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({relationship})});
+    toast('关系已保存，下一轮生效');
+    await loadRelationship();
+  }catch(e){ toast('保存失败：'+(e?.message??e)); }
+};
+
+$('#btn-save-init').onclick = async ()=>{
+  try{
+    const relationship = {
+      ...(REL ?? {}),
+      initialMode: {
+        ...(REL?.initialMode ?? {}),
+        tone: $('#r-init-tone').value.trim(),
+        behaviorRules: $('#r-init-rules').value.split('\n').map((x)=>x.trim()).filter(Boolean),
+      },
+    };
+    await api('/api/relationship',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({relationship})});
+    toast('初始相处方式已保存（后续阶段会由 AI 从这里演化）');
+    await loadRelationship();
+  }catch(e){ toast('保存失败：'+(e?.message??e)); }
+};
+$('#btn-reset-tpl').onclick = async ()=>{
+  if(!confirm('重置为通用模板：各阶段的相处方式会被清空，交给世界 AI 重新演化。关系类型、锚点、来历、初始相处方式会保留。继续？')) return;
+  try{
+    await api('/api/relationship/reset',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({keep:true})});
+    toast('已重置为通用模板');
+    await loadRelationship();
+  }catch(e){ toast('重置失败：'+(e?.message??e)); }
+};
+$('#btn-evolve').onclick = async ()=>{
+  const hint = $('#ev-hint');
+  hint.textContent = '世界 AI 推演中…';
+  try{
+    const r = await api('/api/relationship/evolve',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({stage:$('#ev-stage').value})});
+    hint.textContent = r.ok ? `已按最近剧情重写「${r.stageId}」（${r.reason ?? ''}）` : ('未改写：'+(r.reason ?? '未知原因'));
+    toast(r.ok ? '演化完成' : '演化未生效');
+    await loadRelationship();
+  }catch(e){ hint.textContent = '失败：'+(e?.message??e); }
+};
+
+$('#btn-save-user').onclick = async ()=>{
+  try{
+    const user = {
+      userId: $('#u-id').value,
+      nickname: $('#u-nick').value,
+      profile: $('#u-profile').value,
+      note: $('#u-note').value,
+      initialRelationship: {
+        stage: $('#u-stage').value,
+        notes: $('#u-notes').value.split('\n').map(s=>s.trim()).filter(Boolean),
+      },
+    };
+    await api('/api/user',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({user})});
+    toast('已保存');
+  }catch(e){ toast('保存失败：'+(e?.message??e)); }
+};
+
+// ---------- API 配置 ----------
+async function loadConfig(){
+  const { config, ready } = await api('/api/config');
+  $('#cfg-forms').innerHTML = ROLES.map(([role,desc])=>`
+    <div class="card">
+      <h2>${role} — ${desc} <span class="tag ${ready[role]?'sent':'hard'}">${ready[role]?'已配置':'未配置'}</span></h2>
+      <div class="grid">
+        <div><label>baseUrl</label><input id="api-${role}-baseUrl" value="${config.api[role].baseUrl||''}" placeholder="https://api.deepseek.com"></div>
+        <div><label>apiKey</label><input id="api-${role}-apiKey" value="${config.api[role].apiKey||''}" placeholder="sk-..."></div>
+        <div><label>model</label><input id="api-${role}-model" value="${config.api[role].model||''}"></div>
+        <div><label>temperature</label><input id="api-${role}-temp" type="number" step="0.1" value="${config.api[role].temperature}"></div>
+      </div>
+      <div class="row">
+        <button class="act" onclick="saveRole('${role}')">保存</button>
+        <button class="ghost" onclick="testRole('${role}')">测试连接</button>
+        <span class="muted" id="test-${role}"></span>
+      </div>
+    </div>`).join('');
+  $('#cfg-wsUrl').value = config.onebot.wsUrl||'';
+  $('#cfg-httpUrl').value = config.onebot.httpUrl||'';
+  $('#cfg-token').value = config.onebot.accessToken||'';
+  $('#cfg-selfId').value = config.selfId||'';
+  $('#cfg-advance').value = config.story?.autoAdvanceMinutes ?? 12;
+  $('#cfg-revision').value = config.story?.maxRevision ?? 2;
+  // 演化节奏与主动联系（世界页也在用同一份配置）
+  const set = (id, v) => { const el = $(id); if (el) el.value = v; };
+  set('#w-advance', config.story?.autoAdvanceMinutes ?? 12);
+  set('#w-jitter', config.story?.autoAdvanceJitter ?? 3);
+  set('#w-urge-cd', config.urge?.cooldownMinutes ?? 45);
+  const cb = $('#w-urge'); if (cb) cb.checked = config.urge?.enabled !== false;
+}
+async function saveRole(role){
+  try{
+    const patch = { api:{ [role]:{
+      baseUrl: $(`#api-${role}-baseUrl`).value,
+      apiKey: $(`#api-${role}-apiKey`).value,
+      model: $(`#api-${role}-model`).value,
+      temperature: Number($(`#api-${role}-temp`).value),
+    }}};
+    await api('/api/config',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({config:patch})});
+    toast(`${role} 已保存`);
+    await loadConfig();
+  }catch(e){ toast('保存失败：'+(e?.message??e)); }
+}
+async function testRole(role){
+  const el = $(`#test-${role}`);
+  el.textContent='测试中…';
+  try{
+    const r = await api('/api/test',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({role})});
+    el.textContent = r.ok ? `通（${r.ms}ms）${r.sample||''}` : `失败：${r.error}`;
+  }catch(e){ el.textContent='失败：'+(e?.message??e); }
+}
+// ---------- 备份 ----------
+async function loadBackups(){
+  try{
+    const { backups } = await api('/api/backups');
+    $('#backup-table').querySelector('tbody').innerHTML = (backups||[]).map((b)=>{
+      const kb = (b.size/1024).toFixed(1);
+      return `<tr>
+        <td>${b.file}</td><td>${kb} KB</td><td>${fmtDateTime(b.at)}</td>
+        <td><a class="act" href="/api/backup/download?file=${encodeURIComponent(b.file)}">下载</a>
+        <button class="ghost" data-del="${b.file}">删除</button></td></tr>`;
+    }).join('') || '<tr><td colspan="4" class="muted">还没有备份</td></tr>';
+    const pick = $('#restore-pick');
+    if (pick) {
+      pick.innerHTML = (backups||[]).map((b)=>`<option value="${b.file}">${b.file}</option>`).join('');
+      if ((backups||[]).length) pick.value = backups[0].file;
+    }
+    document.querySelectorAll('#backup-table [data-del]').forEach((el)=>{
+      el.onclick = async ()=>{
+        if(!confirm('删除这个备份？')) return;
+        await api('/api/backup/remove',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({file:el.dataset.del})});
+        toast('已删除'); await loadBackups();
+      };
+    });
+  }catch(e){ /* 静默 */ }
+}
+$('#btn-upload').onclick = async ()=>{
+  const hint = $('#restore-hint');
+  const input = $('#restore-file');
+  const f = input.files?.[0];
+  if(!f) return toast('先选一个备份文件');
+  hint.textContent = '上传中…';
+  try{
+    const r = await fetch('/api/backup/upload?name=' + encodeURIComponent(f.name), {
+      method:'POST', headers:{'content-type':'application/octet-stream'}, body:f,
+    }).then(async (x)=>{
+      const t = await x.text();
+      if(!x.ok) throw new Error(t.slice(0,200));
+      return JSON.parse(t);
+    });
+    hint.textContent = `已上传 ${r.file}（${(r.size/1024).toFixed(1)} KB）`;
+    toast('上传完成，可在下面选择恢复');
+    input.value = '';
+    await loadBackups();
+  }catch(e){ hint.textContent = '上传失败：'+(e?.message??e); }
+};
+$('#btn-restore').onclick = async ()=>{
+  const file = $('#restore-pick').value;
+  if(!file) return toast('先选一个包');
+  if(!confirm(`确定用「${file}」覆盖当前数据吗？\n\n恢复前会自动给现状打一个安全包，恢复完热重载。`)) return;
+  const info = $('#restore-info');
+  info.textContent = '恢复中…';
+  try{
+    const r = await api('/api/backup/restore',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({file})});
+    info.textContent = `已恢复（安全包：${r.safety}；重载 ${r.reloaded?.events ?? 0} 条事件）`;
+    toast('恢复完成');
+    await loadBackups();
+    await loadState(); await loadStages(); await loadRelationship();
+  }catch(e){ info.textContent = '恢复失败：'+(e?.message??e); }
+};
+$('#btn-backup').onclick = async ()=>{
+  const hint = $('#backup-hint');
+  hint.textContent = '打包中…';
+  try{
+    const r = await api('/api/backup',{method:'POST'});
+    hint.textContent = `已生成 ${r.file}（${(r.size/1024).toFixed(1)} KB）`;
+    toast('备份已生成');
+    await loadBackups();
+  }catch(e){ hint.textContent = '失败：'+(e?.message??e); }
+};
+
+$('#btn-save-misc').onclick = async () => {
+  try {
+    const payload = {
+      config: {
+        onebot: { wsUrl: $('#cfg-wsUrl').value, httpUrl: $('#cfg-httpUrl').value, accessToken: $('#cfg-token').value },
+        selfId: $('#cfg-selfId').value,
+        story: { autoAdvanceMinutes: Number($('#cfg-advance').value), maxRevision: Number($('#cfg-revision').value) },
+      },
+    };
+    await api('/api/config', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    toast('已保存');
+  } catch (e) {
+    toast('保存失败：' + (e?.message ?? e));
+  }
+};
+
+// ---------- 表情包 ----------
+async function loadStickers(){
+  const { stickers, visionReady } = await api('/api/stickers');
+  $('#sticker-hint').textContent = visionReady ? '' : '（vision 路由未配置，无法标注）';
+  $('#sticker-grid').innerHTML = (stickers||[]).map((s)=>`
+    <div class="sticker">
+      <img src="/api/sticker-file/${encodeURIComponent(s.file)}" alt="">
+      <div class="desc">${s.desc ? s.desc : '<span class="muted">未标注</span>'}</div>
+      <div class="muted">${(s.tags||[]).slice(0,4).join(' ')}</div>
+      <div class="ops">
+        <button class="ghost sm" data-anno="${s.id}">标注</button>
+        <button class="ghost sm" data-rm="${s.id}">删除</button>
+      </div>
+    </div>`).join('');
+  $('#sticker-grid').querySelectorAll('[data-anno]').forEach(b=>{
+    b.onclick = async ()=>{
+      b.disabled=true; b.textContent='标注中…';
+      try{ await api('/api/stickers/annotate',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id:b.dataset.anno})}); toast('已标注'); await loadStickers(); }
+      catch(e){ toast('标注失败：'+(e?.message??e)); b.disabled=false; b.textContent='标注'; }
+    };
+  });
+  $('#sticker-grid').querySelectorAll('[data-rm]').forEach(b=>{
+    b.onclick = async ()=>{
+      try{ await api('/api/stickers/remove',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id:b.dataset.rm})}); await loadStickers(); }
+      catch(e){ toast('删除失败：'+(e?.message??e)); }
+    };
+  });
+}
+$('#btn-sticker-upload').onclick = async ()=>{
+  const f = $('#sticker-file').files?.[0];
+  if(!f) return toast('先选一张图');
+  const reader = new FileReader();
+  reader.onload = async ()=>{
+    try{
+      await api('/api/stickers',{method:'POST',headers:{'content-type':'application/json'},
+        body:JSON.stringify({ dataBase64: reader.result, mime: f.type })});
+      toast('已导入，可点「标注」');
+      await loadStickers();
+    }catch(e){ toast('导入失败：'+(e?.message??e)); }
+  };
+  reader.readAsDataURL(f);
+};
+
+// ---------- 世界 ----------
+async function loadWorld(){
+  const { world, resolved } = await api('/api/world');
+  WORLD = world ?? {};
+  const preset = WORLD.preset === 'custom' ? 'custom' : 'default';
+  $('#w-preset').value = preset;
+  $('#w-era').value = WORLD.custom?.era ?? '';
+  $('#w-location').value = WORLD.custom?.location ?? '';
+  $('#w-desc').value = WORLD.description ?? '';
+  $('#w-story').value = WORLD.storyRequirement ?? '';
+  $('#w-topics').value = (WORLD.seedTopics ?? []).join('\n');
+  applyPreset();
+  $('#w-resolved').textContent = resolved
+    ? `当前生效 — 时代：${resolved.era} ｜ 地点：${resolved.location}`
+    : '—';
+  await loadSeeded();
+  await loadCursor();
+}
+function applyPreset(){
+  const custom = $('#w-preset').value === 'custom';
+  $('#w-era').disabled = !custom;
+  $('#w-location').disabled = !custom;
+}
+$('#w-preset').onchange = applyPreset;
+
+async function saveWorldPatch(patch, msg){
+  const world = {
+    ...(WORLD ?? {}),
+    ...patch,
+  };
+  const r = await api('/api/world',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({world})});
+  WORLD = r.world ?? world;
+  toast(msg);
+  await loadWorld();
+}
+$('#btn-save-world').onclick = async ()=>{
+  try{
+    await saveWorldPatch({
+      preset: $('#w-preset').value,
+      custom: { era: $('#w-era').value, location: $('#w-location').value },
+      description: $('#w-desc').value,
+    }, '世界设定已保存');
+  }catch(e){ toast('保存失败：'+(e?.message??e)); }
+};
+$('#btn-save-story').onclick = async ()=>{
+  try{
+    await saveWorldPatch({ storyRequirement: $('#w-story').value }, '故事要求已保存');
+  }catch(e){ toast('保存失败：'+(e?.message??e)); }
+};
+$('#btn-reset-story').onclick = async ()=>{
+  try{
+    await saveWorldPatch({ storyRequirement: '' }, '已恢复默认故事要求');
+  }catch(e){ toast('恢复失败：'+(e?.message??e)); }
+};
+$('#btn-save-rhythm').onclick = async ()=>{
+  try{
+    const cfg = {
+      story: {
+        autoAdvanceMinutes: Number($('#w-advance').value),
+        autoAdvanceJitter: Number($('#w-jitter').value),
+      },
+      urge: {
+        enabled: $('#w-urge').checked,
+        cooldownMinutes: Number($('#w-urge-cd').value),
+      },
+    };
+    await api('/api/config',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({config:cfg})});
+    toast('演化节奏已保存，下一轮生效');
+    await loadConfig();
+  }catch(e){ toast('保存失败：'+(e?.message??e)); }
+};
+$('#btn-save-topics').onclick = async ()=>{
+  try{
+    await saveWorldPatch({
+      seedTopics: $('#w-topics').value.split('\n').map(s=>s.trim()).filter(Boolean),
+    }, '播种主题已保存');
+  }catch(e){ toast('保存失败：'+(e?.message??e)); }
+};
+async function loadSeeded(){
+  try{
+    const { events } = await api('/api/seeded');
+    $('#seeded-table').querySelector('tbody').innerHTML = (events||[]).map((e)=>`<tr>
+      <td>${fmtDateTime(e.at ?? e.dueAt)}</td>
+      <td><span class="tag ${e.importance==='high'?'hard':'soft'}">${e.importance}</span></td>
+      <td>${e.status}</td><td>${(e.summary||'').slice(0,44)}</td></tr>`).join('');
+  }catch{ /* 播种器可能未就绪 */ }
+}
+$('#btn-seed').onclick = async ()=>{
+  const hint = $('#seed-hint'), out = $('#seed-out');
+  hint.textContent = '播种中…';
+  try{
+    const r = await api('/api/seed',{method:'POST'});
+    out.classList.remove('hide');
+    out.textContent = JSON.stringify(r,null,2);
+    hint.textContent = r.count ? `新增 ${r.count} 条` : (r.skipped ?? '没有新增');
+    await loadSeeded();
+  }catch(e){ hint.textContent = '失败：'+(e?.message??e); }
+};
+async function loadCursor(){
+  try{
+    const d = await api('/api/cursor');
+    $('#cursor-out').textContent = d.window || (d.at ?? '（尚未推进）');
+  }catch(e){ $('#cursor-out').textContent = '读取失败：'+(e?.message??e); }
+}
+
+// ---------- 导出 ----------
+function exportRange(){
+  const f = $('#ex-from').value, t = $('#ex-to').value;
+  return { from: f ? new Date(f).toISOString() : '', to: t ? new Date(t).toISOString() : '' };
+}
+function exportUrl(fmt){
+  const { from, to } = exportRange();
+  const q = new URLSearchParams({ format: fmt });
+  if (from) q.set('from', from);
+  if (to) q.set('to', to);
+  return '/api/export?' + q.toString();
+}
+$('#btn-export-md').onclick = ()=>{ window.location.href = exportUrl('markdown'); };
+$('#btn-export-json').onclick = ()=>{ window.location.href = exportUrl('json'); };
+$('#btn-export-preview').onclick = async ()=>{
+  const out = $('#export-out'), hint = $('#export-hint');
+  hint.textContent = '加载中…';
+  try{
+    const r = await fetch(exportUrl('json'), { headers:{} });
+    const data = await r.json();
+    out.classList.remove('hide');
+    out.textContent = (data.events||[]).slice(0,60).map((e)=>
+      `${fmtDateTime(e.at)}  [${e.kind}] ${e.summary ?? ''}`).join('\n') || '（无记录）';
+    hint.textContent = `共 ${data?.meta?.count ?? 0} 条`;
+  }catch(e){ hint.textContent = '失败：'+(e?.message??e); }
+};
+
+// ---------- 账本 ----------
+// 账本状态要看得懂：哪个是「她没回」，哪个是「想发没发成」
+const LEDGER_LABEL = {
+  sent: ['已发送', 'sent'],
+  not_replied: ['她没回', 'soft'],
+  skipped: ['她没回', 'soft'],
+  blocked: ['已拦下', 'hard'],
+  blocked_fictional: ['给虚构角色', 'hard'],
+  throttled_dropped: ['限流放弃', 'hard'],
+};
+async function loadLedger(){
+  const { recent } = await api('/api/ledger');
+  $('#ledger-table').querySelector('tbody').innerHTML = (recent||[]).map((l)=>{
+    const [label, cls] = LEDGER_LABEL[l.status] ?? [l.status ?? '', 'soft'];
+    // direction=in：这是「他发来的消息」，她没回——不是她有话没发出去
+    const incoming = l.direction === 'in' || l.stage === 'gate';
+    const content = incoming ? `🧑 他说：${l.content||''}` : (l.content||'');
+    return `<tr>
+    <td>${fmtTimeSec(l.at)}</td>
+    <td><span class="tag ${cls}">${label}</span></td>
+    <td>${incoming ? '—' : (l.addresseeName||l.addresseeId||'')}</td>
+    <td>${content.slice(0,60)}${l.reason ? ` <span class="muted">（${l.reason}）</span>` : ''}</td></tr>`;
+  }).join('');
+  const t = await api('/api/turns');
+  $('#turns-table').querySelector('tbody').innerHTML = (t.recent||[]).map((x)=>`<tr>
+    <td>${fmtTimeSec(x.at)}</td><td>${x.source}</td><td>${x.stage||'—'}</td>
+    <td>${(x.delivered||[]).length}</td><td>${(x.blocked||[]).length}</td><td>${(x.repeats||[]).length}</td></tr>`).join('');
+}
+
+// ---------- tab ----------
+const LOADERS = { state:loadState, relation:loadStages, character:loadCharacter, cast:loadCast, user:async()=>{ await loadUser(); await loadRelationship(); }, config:loadConfig, backup:loadBackups, world:loadWorld, stickers:loadStickers, export:async()=>{}, ledger:loadLedger };
+document.querySelectorAll('nav button').forEach((b)=>{
+  b.onclick = ()=>{
+    document.querySelectorAll('nav button').forEach((x)=>x.classList.remove('active'));
+    b.classList.add('active');
+    Object.keys(LOADERS).forEach((t)=>document.getElementById('tab-'+t).classList.toggle('hide', t!==b.dataset.tab));
+    LOADERS[b.dataset.tab]?.().catch((e)=>toast('加载失败：'+(e?.message??e)));
+  };
+});
+
+$('#btn-advance').onclick = async ()=>{
+  const out = $('#advance-out');
+  out.classList.remove('hide'); out.textContent='推进中…';
+  try{
+    const r = await api('/api/advance',{method:'POST'});
+    out.textContent = JSON.stringify(r,null,2);
+    await loadState();
+  }catch(e){ out.textContent='推进失败：'+(e?.message??e); }
+};
+
+(async function init(){
+  try{ await loadState(); await loadStages(); }
+  catch(e){ $('#world-block').textContent = '加载失败：'+(e?.message??e); }
+  setInterval(()=>loadState().catch(()=>{}), 15000);
+})();
+</script>
+</body>
+</html>

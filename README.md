@@ -205,7 +205,7 @@ npm start                   # = node src/main.js
 
 本项目**参考了以下两个开源项目**，在此明确致谢：
 
-- **[hds-interlude](https://gitee.com/MomoiCore/hds-interlude)** — 角色扮演叙事插件。摹影的「独立生活回合」「世界事件播种器（持证外部事件源）」「事务式投递账本」「当日时间轴固定注入」等思路都源于它。
+- **[hds-interlude](https://gitee.com/MomoiCore/hds-interlude)** — 角色扮演叙事插件。摹影的「独立生活回合」「世界事件播种器（持证外部事件源）」「事务式投递账本」「当日时间轴固定注入」等思路都源于它；同时，摹影也正是在使用它时遇到时间线矛盾、消息归属混乱、文体漂移这三个问题，才决定从根部重写。
 - **[qq-agent-plus](https://github.com/sakurawwwxh/qq-agent-plus)** — QQ 机器人完整栈。摹影**直接复用**了它的 OneBot 客户端（`onebot.js`）与 QQ 表情目录（`face-catalog.js`），并参考了它的表情包（导入 / 识图标注 / 对话使用）设计、SnowLuma + OneBot + noVNC 的部署方式、一键部署脚本的写法，以及多 API 路由的改造思路。
 
 如果你在用摹影，也请去给这两个项目点个星。

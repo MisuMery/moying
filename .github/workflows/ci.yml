@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      # 按 lock 精确安装依赖（缺了这一步，ws 装不上，测试直接红）
+      - run: npm ci --no-audit --no-fund
+      # 公开仓库不含 data/（真实角色卡不进版本库）。测试跑在干净环境下，
+      # test/fixtures/ 的合成演示数据会补位——这正是发布包用户拿到手的样子。
+      # 测试之间用临时数据目录，不碰仓库里的任何文件。
+      - run: npm test

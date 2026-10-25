@@ -1,0 +1,18 @@
+{
+  "_note": "用户模板。放成 data/user.json。这里只写「对方是谁」，感情的深浅与相处方式一律交给 relationship.json。",
+  "userId": "（对方 QQ 号）",
+  "nickname": "",
+  "profile": "（她视角下，这个人是谁——中性的事实描述）",
+  "note": "（备注，不注入提示词）",
+  "initialRelationship": {
+    "stage": "stranger",
+    "facets": {
+      "trust": 0,
+      "warmth": 0,
+      "annoyance": 0,
+      "intimacy": 0,
+      "interest": 0
+    },
+    "notes": []
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "_note": "世界模板。放成 data/world.json。preset=default 就是现实世界（时间地点跟着真实世界走）；custom 才是架空。",
+  "preset": "default",
+  "custom": {
+    "era": "",
+    "location": ""
+  },
+  "description": "（这个世界长什么样：有什么、没有什么、日常的质感）",
+  "storyRequirement": "当代现实主义生活剧。主角拥有丰富、具体且持续变化的个人生活；配角也有各自的节奏、立场与情绪。关系在日常互动和小事件中缓慢发展，生活常常留下未完成但真实感的余波。",
+  "seedTopics": [
+    "（播种器可取材的外部事件主题）"
+  ],
+  "seedDensity": {
+    "perDayMin": 1,
+    "perDayMax": 4,
+    "highPerDay": 1,
+    "singleMax": 2
+  }
+}

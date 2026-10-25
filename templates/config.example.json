@@ -1,0 +1,62 @@
+{
+  "onebot": {
+    "wsUrl": "ws://snowluma:3001",
+    "httpUrl": "http://snowluma:3000",
+    "accessToken": "",
+    "heartbeat": "auto"
+  },
+  "api": {
+    "chat": {
+      "baseUrl": "",
+      "apiKey": "",
+      "model": "",
+      "temperature": 0.9,
+      "maxTokens": 300,
+      "timeoutMs": 30000
+    },
+    "story": {
+      "baseUrl": "",
+      "apiKey": "",
+      "model": "",
+      "temperature": 0.8,
+      "maxTokens": 4000,
+      "timeoutMs": 120000
+    },
+    "vision": {
+      "baseUrl": "",
+      "apiKey": "",
+      "model": "",
+      "temperature": 0.3,
+      "maxTokens": 800,
+      "timeoutMs": 60000
+    }
+  },
+  "selfId": "",
+  "allowedUsers": [],
+  "story": {
+    "autoAdvanceMinutes": 12,
+    "autoAdvanceJitter": 3,
+    "seedIntervalMinutes": 60,
+    "seedJitterMinutes": 15,
+    "timezone": "Asia/Shanghai",
+    "maxRevision": 2
+  },
+  "urge": {
+    "enabled": true,
+    "cooldownMinutes": 45,
+    "missAfterMinutes": 360
+  },
+  "reply": {
+    "preset": "normal",
+    "enabled": true
+  },
+  "rate": {
+    "maxCharsPerMinute": 40,
+    "maxMessagesPerMinute": 6,
+    "maxWaitMs": 150000
+  },
+  "console": {
+    "port": 3210,
+    "token": ""
+  }
+}
