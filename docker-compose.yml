@@ -1,0 +1,89 @@
+# 摹影全栈：QQ 协议端（SnowLuma + noVNC）+ 摹影引擎。
+#
+# 正常用法是跑根目录的 deploy.sh（装 Docker、生成密钥、拉起服务、回填 OneBot token）。
+# 手动跑时至少先准备 .env（deploy.sh 会生成）：
+#
+#   docker compose up -d --build
+#
+# 端口说明见 README「需要开放的端口」。默认只有 noVNC(6081) 与控制台(3210) 对外，
+# 协议端的 WebUI(5099) 只绑 127.0.0.1，OneBot 的 3000/3001 只在容器网络内可达。
+name: moying
+
+services:
+  snowluma:
+    # 国内网络：Docker Hub 不可直连，默认走镜像站。要用官方镜像设：
+    #   SNOWLUMA_IMAGE=motricseven7/snowluma:v1.14.22
+    image: ${SNOWLUMA_IMAGE:-docker.m.daocloud.io/motricseven7/snowluma:v1.14.22}
+    container_name: moying-snowluma
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    shm_size: 1gb
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 1048576
+    # SnowLuma 的 Chromium 需要 ptrace；这两项来自它自己的文档要求
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp=unconfined
+    environment:
+      # 留空＝SnowLuma 随机生成并打印在首次启动日志；不要用公开默认密码
+      VNC_PASSWD: ${VNC_PASSWD:-}
+      SNOWLUMA_ONEBOT_HOST: 0.0.0.0
+      SNOWLUMA_UID: ${SNOWLUMA_UID:-1000}
+      SNOWLUMA_GID: ${SNOWLUMA_GID:-1000}
+      SNOWLUMA_WEBUI_HOST: 0.0.0.0
+      SNOWLUMA_WEBUI_PORT: "5099"
+      SNOWLUMA_WEBUI_BOOTSTRAP_PASSWORD: ${SNOWLUMA_WEBUI_BOOTSTRAP_PASSWORD:-}
+      SNOWLUMA_LOG_LEVEL: ${SNOWLUMA_LOG_LEVEL:-info}
+      SNOWLUMA_SCREEN: ${SNOWLUMA_SCREEN:-1920x1080x24}
+      SNOWLUMA_HOOK_AUTOLOAD: "1"
+      SNOWLUMA_QQ_FLAGS: --disable-gpu --disable-software-rasterizer --disable-gpu-compositing
+      SNOWLUMA_TELEMETRY: "0"
+      TZ: Asia/Shanghai
+    ports:
+      # noVNC：扫二维码登录 QQ 用（受 VNC 密码保护）
+      - "${NOVNC_BIND:-0.0.0.0}:${NOVNC_PORT:-6081}:6081"
+      # 协议端 WebUI：仅本机，需要时用 SSH 隧道
+      - "${SNOWLUMA_WEBUI_BIND:-127.0.0.1}:${SNOWLUMA_WEBUI_HOST_PORT:-5099}:5099"
+      # OneBot 的 3000/3001 不发布到宿主机，只在同一网络内给摹影用
+    volumes:
+      - ./snowluma-data:/app/data
+      - ./snowluma-client-config:/app/.config
+      - ./snowluma-client-data:/app/.local/share
+    networks:
+      - moying-net
+
+  moying:
+    build: .
+    image: moying:latest
+    container_name: moying
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    depends_on:
+      - snowluma
+    networks:
+      - moying-net
+    volumes:
+      # 数据持久化：配置、角色卡、关系、世界、时间轴、账本、表情包
+      - ./data:/app/data
+    ports:
+      # 控制台：登录用 data/config.json 里的 console.token
+      - "${CONSOLE_BIND:-0.0.0.0}:${CONSOLE_PORT:-3210}:3210"
+    environment:
+      - TZ=Asia/Shanghai
+      - MOYING_DATA_DIR=/app/data
+
+networks:
+  moying-net:
+    name: moying-net
+    driver: bridge

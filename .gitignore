@@ -1,0 +1,23 @@
+# ---- 凭据：绝不进版本库 ----
+# 由 deploy.sh 生成：控制台令牌、noVNC 密码、OneBot token
+.env
+*.env
+!.env.example
+
+# ---- 协议端：QQ 登录会话与 OneBot token ----
+snowluma-data/
+snowluma-client-config/
+snowluma-client-data/
+
+# ---- 运行时数据：配置（含 API key）、角色设定、故事时间轴、账本、备份 ----
+# 用 data/* 而不是 data/：目录整体被排除时，git 不会进去看，!data/.gitkeep
+# 这条 negation 就形同虚设（git 无法重新包含被排除目录里的文件）。
+data/*
+!data/.gitkeep
+
+# ---- 依赖与杂项 ----
+node_modules/
+npm-debug.log*
+.DS_Store
+*.tar.gz
+*.zip

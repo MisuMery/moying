@@ -1,0 +1,18 @@
+{
+  "name": "moying-engine",
+  "version": "1.0.0",
+  "description": "主角 · 时间一致的角色扮演引擎（私聊核心）",
+  "type": "module",
+  "license": "MIT",
+  "author": "Moying contributors",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/main.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
