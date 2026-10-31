@@ -3,6 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { DATA_DIR } from './config.js';
+import { sortEventsByTime } from './world/time.js';
 
 export class JsonlStore {
   constructor(file) {
@@ -63,8 +64,14 @@ export class Store {
     return list.map((e) => this.appendEvent(e));
   }
 
+  /**
+   * 读全部事件，**按 at 升序**返回。
+   * 文件是追加写，行序不等于时间序（见 world/time.js 的 sortEventsByTime），
+   * 所有「取最近 N 条」「取最后一条」的调用都依赖这里排好序——
+   * 排序放在最上游一处，比在每个调用点各自排序更不容易漏。
+   */
   loadEvents() {
-    return this.events.load();
+    return sortEventsByTime(this.events.load());
   }
 
   /** 投递账本：每条出站/被拦的记录 */

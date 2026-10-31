@@ -11,6 +11,24 @@ import { readBytesBounded } from '../http-body.js';
 
 const MAX_IMAGES = 3;
 
+/**
+ * 识图提示词：先判定图片「类型」，再说清「是什么 + 表达什么含义」。
+ * 旧版只让模型「客观描述画面」，还写死「这多半是表情包」、禁止谈意图——
+ * 结果表情包和照片分不开，也读不出梗和情绪（2026-10-27 用户反馈）。
+ */
+export const VISION_PROMPT = [
+  '你在帮一个聊天 AI 读懂对方发来的这张图片。先判断它是什么类型，再说清它是什么、表达了什么含义。',
+  '',
+  '严格按一行输出（不要换行、不要多余解释）：',
+  '类型：<表情包/梗图 | 照片 | 截图 | 手绘/插画 | 文字图/文档 | 其他>；内容：<画面里是什么、谁在做什么、什么场景>；含义：<这张图本身传达的情绪或意思，如：撒娇、无语、嘲讽、开心、求安慰、炫耀、赞同、敷衍等；若是照片则写氛围与重点>；文字：<图上的字原样引出，没有就写 无>',
+  '',
+  '要求：',
+  '- 「含义」说的是这张图本身表达什么，不是猜对方为什么发它。',
+  '- 表情包/梗图必须点出它的「梗」和情绪，不能只写画了什么。',
+  '- 看不清就如实写「看不清」，不要编。',
+  '- 总共不超过 100 字。',
+].join('\n');
+
 /** SSRF 防线：图片地址是消息里带来的，不能拿它去摸内网与云元数据接口。
  *  导出供测试：初始 URL 与重定向后的最终 URL 都必须过这一关。 */
 export function isPublicHttpUrl(raw) {
@@ -88,6 +106,24 @@ async function urlViaApi(client, file) {
   }
 }
 
+/** 视觉调用带重试：429（限流）/5xx/网络错误是常见瞬时故障，
+ *  不重试的话这条消息就彻底"识图失败"了（2026-10-27 线上遇到 GLM 429）。 */
+async function callVisionWithRetry(llm, messages, opts, tries = 3) {
+  let lastErr;
+  for (let i = 0; i < tries; i += 1) {
+    try {
+      return await llm('vision', messages, opts);
+    } catch (e) {
+      lastErr = e;
+      const st = Number(e?.status);
+      const retryable = st === 429 || (st >= 500 && st < 600) || !Number.isFinite(st);
+      if (!retryable || i === tries - 1) throw e;
+      await new Promise((r) => setTimeout(r, 1500 * (i + 1)));
+    }
+  }
+  throw lastErr;
+}
+
 /**
  * 把一组图片段变成「一行描述」。
  * @param {Array<{url?:string,file?:string}>} images
@@ -115,17 +151,12 @@ export async function describeImages(images = [], { client = null, llm = callLLM
       continue;
     }
     try {
-      const { content } = await llm('vision', [
-        {
-          role: 'user',
-          content:
-            '用一句话客观描述这张图片（这多半是一张聊天用的表情包）：画面里有什么、在做什么动作、传达什么情绪；'
-            + '图上有字就原样引出来。不要猜测发送者的意图，不要发挥，30 字以内。',
-        },
+      const { content } = await callVisionWithRetry(llm, [
+        { role: 'user', content: VISION_PROMPT },
         { role: 'user', content: '这张图：' },
-      ], { images: [dataUrl], maxTokens: 120, temperature: 0.2, timeoutMs: 45000 });
+      ], { images: [dataUrl], maxTokens: 220, temperature: 0.2, timeoutMs: 45000 });
       const note = String(content ?? '').trim().replace(/\s+/g, ' ');
-      results.push({ ok: Boolean(note), note: note || '（视觉模型没给出描述）' });
+      results.push({ ok: Boolean(note), note: note || '（视觉模型没给出描述）', dataUrl });
     } catch (error) {
       results.push({ ok: false, note: `（识图失败：${String(error?.message ?? error).slice(0, 80)}）` });
     }

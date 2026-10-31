@@ -12,12 +12,25 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { DATA_DIR, ROOT } from '../config.js';
+import { BOND_THRESHOLD } from './impression.js';
 
 /**
- * 从印象分数反推阶段（没显式设置时用）。
- * 对齐各档自带的分值：陌生 0 / 疏离 2 / 熟悉 4 / 信任 5 / 依赖 6（trust+warmth+intimacy）。
+ * 从印象反推阶段（没显式设置时用）。
+ *
+ * 优先用**羁绊值 bond**：它是没有上限的累积量，关系能一直往前走。
+ * 旧的 facets 只在老数据（还没有 bond）时兜底——facets ±2 封顶，
+ * 用久了会顶格卡死，「关系随剧情自然推进」就停在那儿了。
  */
 export function inferStageId(impression) {
+  const bond = Number(impression?.bond ?? 0);
+  if (Number.isFinite(bond) && bond > 0) {
+    if (bond >= BOND_THRESHOLD.attached) return 'attached';
+    if (bond >= BOND_THRESHOLD.trusting) return 'trusting';
+    if (bond >= BOND_THRESHOLD.familiar) return 'familiar';
+    if (bond >= BOND_THRESHOLD.distant) return 'distant';
+    return 'stranger';
+  }
+  // 兜底：对齐各档自带的分值（trust+warmth+intimacy）
   const f = impression?.facets ?? {};
   const score = (Number(f.intimacy) || 0) + (Number(f.warmth) || 0) + (Number(f.trust) || 0);
   if (score <= 0) return 'stranger';
@@ -144,6 +157,10 @@ export function renderRelationship(impression, stage) {
     : (rel.initialMode?.specialTriggers ?? rel.specialTriggers);
   if (Array.isArray(triggers) && triggers.length) {
     lines.push('', '特殊触发（遇到时按这个方式反应）：');
+    // 称呼归属边界：triggers 里的旧称呼、暗号只属于「他」。没有这句边界，
+    // 故事模型会把「丽儿」这类私密称呼泛化到室友/同事嘴里——
+    // 2026-10-25 线上实例：林夏喊出「丽儿，还没睡啊？」，而那是他对她的旧称呼。
+    lines.push('（这些触发只对「他」成立：只有他做出对应动作才算触发。触发里出现的称呼、暗号是他的专属，故事内其他角色——室友、同事、家人——在任何场合都不许使用；他们叫主角一律按 cast 设定。）');
     for (const t of triggers) {
       lines.push(`- 当${t.when}：${t.react}`);
       if (t.note) lines.push(`  （${t.note}）`);

@@ -23,6 +23,31 @@ export function toMs(value) {
   return Number.isFinite(t) ? t : NaN;
 }
 
+/**
+ * 按 at 升序排列事件。
+ *
+ * 为什么需要这一步：events.jsonl 是追加写，写入时刻可能晚于事件时间。
+ * 2026-10-29 线上实例——「那你现在快去睡觉哦」15:01:54 到达，但它是在上一回合
+ * 的对话阶段跑完（15:02:06 写了 say）之后才落库的，于是行序变成
+ * `… say(15:02:06) → world(15:01:54) …`，读出来就是倒错的。
+ *
+ * 规则：
+ * - 有 at 的按时间升序；
+ * - 同一时间戳保持原有写入顺序（稳定），这样同一回合里 act → say 的先后不被打乱；
+ * - at 解析不出来的排到最后，彼此也保持原序（不能让它插到中间把顺序搅乱）。
+ */
+export function sortEventsByTime(list = []) {
+  return list
+    .map((e, i) => ({ e, i, t: toMs(e?.at) }))
+    .sort((a, b) => {
+      const av = Number.isFinite(a.t) ? a.t : Number.POSITIVE_INFINITY;
+      const bv = Number.isFinite(b.t) ? b.t : Number.POSITIVE_INFINITY;
+      if (av !== bv) return av - bv;
+      return a.i - b.i;
+    })
+    .map((x) => x.e);
+}
+
 /** 毫秒 → 本地时区的 HH:mm */
 export function fmtClock(ms, tz = timezone()) {
   return new Intl.DateTimeFormat('zh-CN', {

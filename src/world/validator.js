@@ -7,6 +7,7 @@
 import { toMs, localHour, localWeekday, timezone } from './time.js';
 import { narrativeLength } from '../persona/card.js';
 import { Timeline, Place, EventKind, PLACE_LABEL } from './state.js';
+import { resolveSpeech } from './speech.js';
 
 export const Severity = { HARD: 'hard', SOFT: 'soft' };
 
@@ -20,10 +21,19 @@ const RULES = {
   R7: '叙述时钟',
   R8: '睡眠时段',
   R9: '叙事篇幅',
+  R10: '话语归属',
+  R11: '话语主体',
+  R12: '同住边界',
+  R13: '行程一致',
+  R14: '途中未抵达',
 };
 
+/** 时钟容差：模型常把时间写到整秒/整分，比毫秒级的真实记录早零点几秒；
+ *  这算同一时刻，不该判成「时间倒流」去白白重写一轮。 */
+const CLOCK_TOLERANCE_MS = 1000;
+
 /** 硬矛盾：必须拒绝重生成；软矛盾：自动补字段并留痕 */
-const HARD_RULES = new Set(['R1', 'R2', 'R5', 'R7', 'R8']);
+const HARD_RULES = new Set(['R1', 'R2', 'R5', 'R7', 'R8', 'R10', 'R11', 'R12', 'R13', 'R14']);
 
 // ---------- 睡眠时段：这段时间里只能有睡眠中极细微的事 ----------
 
@@ -148,6 +158,76 @@ export function validateNarration(narration, { at = Date.now(), persona = null }
   return violations;
 }
 
+/** 复述「她回复了他」的说法——出现这些的 say 事件是在替对话阶段写她的话。
+ *  她回没回、回得迟不迟是事实（可以写成 act），回了什么不是这一阶段的事。 */
+const REPLY_MARKERS = [
+  '回了一句', '回了句', '回他', '回你', '回给', '回了一条', '回了条', '回复了一句', '回复了句',
+  '应了一句', '应了句', '答应了一句', '答了一句', '答了句',
+  '发了一句', '发了句', '发了一条', '敲了一句', '写了句', '写了一句', '打了句', '打了一句',
+  '秒回', '打字回', '斟酌后回', '改了几遍才回', '删改几次后回', '删了又打', '重新组织语言回',
+  '把刚才的事告诉他', '顺嘴说了句那件事', '把这话发给', '把自己手边的事说给他',
+  // 2026-10-29：世界阶段（尤其 auto 推进）常直接写"已发送"的结果。这些不在上面
+  // "复述内容"的语义里，但同样是在替对话阶段宣布"发送已完成"——不拦就会出现
+  // 故事里她回了、QQ 上却没消息。加进来，让 R10 一并降级成过程。
+  '回了过去', '回了消息', '发了过去', '发了出去', '发出去了',
+  '按了发送', '点了发送', '发送成功', '已发送',
+];
+
+/** 配角显示名列表：registry 缺失时退回空数组（不影响其他规则） */
+function castNameList(ctx) {
+  try {
+    const list = ctx?.registry?.fictionalCast?.() ?? [];
+    return list.map((a) => a?.displayName).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+/** 发送类说法：引号内容前面出现这些，说明那句引号是「她打给他/发给他的话」 */
+const SEND_MARKERS = [
+  '打出来', '打出', '打完', '敲了', '敲出', '敲字', '输入', '码了', '打了',
+  '发出去', '发出', '发送', '发了', '发过去', '回了', '回复', '回他', '回你', '回给',
+  '补一句', '补了句', '又补', '删改', '删了又打', '删掉又打', '按下发送', '按了发送',
+  '改了又改', '斟酌', '删了两个字', '删了字', '发送出去',
+];
+
+/** 引述标记：引号前出现这些，说明那句是「他发来的消息」或屏幕上的字，不是她要发出的 */
+const QUOTE_MARKERS = [
+  '看到', '看见', '那行字', '屏幕上', '写着', '他发来', '他发的', '发来的', '消息是',
+  '那句是', '他问', '他说', '问他', '问他道', '回想起他说', '他之前说',
+];
+
+/**
+ * 抹掉叙事里「她打给他 / 发给他」的原话。
+ *
+ * 她真正发了什么由对话阶段决定；这一阶段把原话写进散文，就会出现
+ * 「故事里她说 A，QQ 上收到的是 B」。只抹引号里的内容，动作与余波都保留，
+ * 因此「她慢慢打出来，中间删了「早」字又加回去」会变成
+ * 「她慢慢打出来，中间删了字又加回去」——读起来照样顺。
+ *
+ * @param {string} narration
+ * @param {{castNames?:string[]}} opts
+ * @returns {{text:string, removed:string[]}}
+ */
+export function sanitizeOwnSays(narration, { castNames = [] } = {}) {
+  const text = String(narration ?? '');
+  if (!text.trim()) return { text, removed: [] };
+  const removed = [];
+  // 「X」她慢慢打出来 / 她慢慢打出来「X」两种写法都要认，所以前后各看一段
+  const out = text.replace(/([「『“]([^「」『』”]{1,40})[」』”])(：|:)?/g, (full, quoted, inner, colon, offset, str) => {
+    const before = str.slice(Math.max(0, offset - 26), offset);
+    const after = str.slice(offset + quoted.length, offset + quoted.length + 26);
+    const ctx = before + after;
+    if (QUOTE_MARKERS.some((m) => before.includes(m) || after.includes(m))) return full; // 他发来的/屏幕上的字
+    if (castNames.some((n) => n && ctx.includes(n))) return full; // 配角当场说的话
+    // 发送动作可以在引号前，也可以在引号后（「X」她慢慢打出来）
+    if (!SEND_MARKERS.some((m) => before.includes(m)) && !SEND_MARKERS.some((m) => after.includes(m))) return full;
+    removed.push(inner);
+    return ''; // 连同紧跟的冒号一起去掉，免得留下「又补一句：」
+  });
+  return { text: out.replace(/[ 　]{2,}/g, ' '), removed };
+}
+
 /** 某一刻她是不是在睡觉（由角色卡作息推导） */
 export function sleepState(persona, at = Date.now()) {
   const r = persona?.rhythm ?? {};
@@ -171,6 +251,59 @@ export function sleepState(persona, at = Date.now()) {
   };
 }
 
+// ---------- R14 的用词判定 ----------
+//
+// 在途和已达的区别只在措辞里，字段看不出来：place 都填 transit，
+// 但一句「到超市门口啦」就让她瞬移到了。所以这里只看话，不看字段。
+//
+// 两段正则分工：
+//   NOT_YET = 路上该说的（还没到 / 快到了 / 再走五分钟）——先剔掉，剔完剩下的才算嫌疑
+//   ARRIVED = 抵达该说的（到了 / 进门 / 下车 / 站在门口）
+// 目的地名取自这次行程的 move.to —— 不是地点白名单，没预登记的地儿照样管得着。
+const NOT_YET_SRC = '(还|都)?没(有|过)?[^。！？，,；;]{0,8}?(到|进|下|出)(了|啦|车|站)?'
+  + '|(快|就快|马上|就要|即将|快要|将要|要|将)[^。！？，,；;]{0,6}?到(了|啦|达)?'
+  + '|再[^。！？，,；;]{0,10}?就?到(了|啦)?'
+  + '|还有[^。！？，,；;]{0,10}?到'
+  + '|差[^。！？，,；;]{0,6}?到'
+  + '|在路上|在车上|还没|换乘|转乘|转线|准备到|起身|快到';
+
+const ARRIVED_SRC = '到了|到啦|到达|到站|已经到|走进(门|楼|店|超市|公司|家|屋)'
+  + '|到(家|公司|店|楼|门口)(了|啦)|回(到)?(家|公司|店)(了|啦)'
+  + '|进了?(门|楼|店|超市|公司|家|屋)|进(门|屋)|推门|跨进'
+  + '|下车了|出站|站在[^。！？，,；;]{0,6}?(门口|门边|门前)';
+
+/** 地点标签取短名：'超市/菜场' → '超市'，'外面（和熟人聚会）' → '外面' */
+export function shortPlace(id) {
+  const raw = PLACE_LABEL[id];
+  if (!raw) return '';
+  return String(raw).split('/')[0].replace(/（[^）]*）/g, '').trim();
+}
+
+/**
+ * 这段文字有没有「我到了」。
+ * @param {string} text 事件的 summary + prose（或她要说的话）
+ * @param {string} toPlace 这段行程的目的地 id
+ * @returns {string} 命中的说法，没命中返回空串
+ */
+export function findArrivalClaim(text, toPlace) {
+  const s = String(text ?? '');
+  if (!s.trim()) return '';
+  // 「收到消息：到家了吗」是他问的，「陈哥问她外卖是不是也到了」是别人说的。
+  // 只判她自己的宣称，引述一律放行。
+  if (/^\s*(收到消息|他发来|他说|他问|他：|他\s)/.test(s)) return '';
+  if (/(吗|呢)\s*[。？?]?\s*$/.test(s) && /(到了|到家了|到了吗)/.test(s)) return '';
+  const stripped = s.replace(new RegExp(NOT_YET_SRC, 'g'), ' ');
+  const hit = stripped.match(new RegExp(ARRIVED_SRC));
+  if (hit) return hit[0];
+  const label = shortPlace(toPlace);
+  if (label) {
+    const esc = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const m = stripped.match(new RegExp(`${esc}(门口|门前|里面|里头|大厅|里)`));
+    if (m) return m[0];
+  }
+  return '';
+}
+
 function violation(rule, severity, message, extra = {}) {
   return { rule, ruleName: RULES[rule], severity, message, ...extra };
 }
@@ -189,22 +322,92 @@ export function validateDrafts(drafts, timeline, ctx = {}) {
   let prevAt = sim.lastAt();
 
   for (const [index, d] of (drafts ?? []).entries()) {
-    const at = toMs(d?.at);
+    let at = toMs(d?.at);
 
     // R1 时钟单调：不能早于已提交的最后一条，也不能超过现在
     if (!Number.isFinite(at)) {
       violations.push(violation('R1', Severity.HARD, `第 ${index + 1} 条事件时间无法解析: ${d?.at}`, { index }));
       continue;
     }
-    if (prevAt !== null && at < prevAt) {
+    if (prevAt !== null && at < prevAt - CLOCK_TOLERANCE_MS) {
       violations.push(violation('R1', Severity.HARD,
         `第 ${index + 1} 条事件时间 ${new Date(at).toISOString()} 早于已提交的最后一条 ${new Date(prevAt).toISOString()}（时间倒流）`,
         { index }));
     }
-    if (at > now) {
+    // 容差内（同一秒左右）：程序直接顺延，不判违规、也不回灌重写。
+    // 这只是模型时间精度不够（整秒 vs 毫秒），不是矛盾；
+    // 报成违规会让每个用户回合都白跑一轮重写，拖慢回复。
+    if (prevAt !== null && at >= prevAt - CLOCK_TOLERANCE_MS && at <= prevAt) {
+      d.at = new Date(prevAt + 1000).toISOString();
+      at = prevAt + 1000;
+    }
+    if (at > now + CLOCK_TOLERANCE_MS) {
       violations.push(violation('R1', Severity.HARD,
         `第 ${index + 1} 条事件时间 ${new Date(at).toISOString()} 晚于当前时间（写到了未来）`,
         { index }));
+    }
+
+    // R11 话语主体：say 必须写清「谁说的、说给谁」。
+    // 2026-10-29 审计：821 条 say 里有 335 条只有 ('self',)、28 条是 ('self','c:linxia')
+    // 却同时装着「她对林夏说」和「林夏对她说」——读取端只能猜，A 的事就被套到 B 身上。
+    if (d?.kind === EventKind.SAY) {
+      const sp = String(d?.speaker ?? '').trim();
+      const to = String(d?.to ?? '').trim();
+      if (!sp) {
+        violations.push(violation('R11', Severity.HARD,
+          `第 ${index + 1} 条 say 事件没有 speaker——必须写清这句话是谁说的（self 或 c:xxx）`,
+          { index }));
+      } else if (sp.startsWith('u:')) {
+        violations.push(violation('R11', Severity.HARD,
+          `第 ${index + 1} 条 say 事件的 speaker 是真实用户——他不在这一阶段的场景里，不许替他写话`,
+          { index }));
+      } else if (sp !== 'self' && !sp.startsWith('c:')) {
+        violations.push(violation('R11', Severity.HARD,
+          `第 ${index + 1} 条 say 事件的 speaker「${sp}」不合法，只能填 self 或 c:xxx`,
+          { index }));
+      }
+      if (to && !to.startsWith('c:') && to !== 'self') {
+        violations.push(violation('R11', Severity.HARD,
+          `第 ${index + 1} 条 say 事件的 to「${to}」不合法，只能填 c:xxx、self 或留空`,
+          { index }));
+      }
+      if (to && to === sp) {
+        violations.push(violation('R11', Severity.HARD,
+          `第 ${index + 1} 条 say 事件自己说给自己（speaker 与 to 相同）`,
+          { index }));
+      }
+    }
+
+    // R10 话语归属：这一阶段不许替她写下「对他说出口的话」——那部分由对话阶段产出。
+    // 两边兼写的结果就是：故事里她说「知道啦，这就躺下」，实际发给他的是「嗯」。
+    if (d?.kind === EventKind.SAY) {
+      const { speaker, to: resolvedTo } = resolveSpeech(d, {
+        nameOf: (id) => ctx.registry?.get?.(id)?.displayName ?? id,
+      });
+      const toUser = speaker.startsWith('u:') ? speaker : (String(resolvedTo ?? '').startsWith('u:') ? resolvedTo : null);
+      if (toUser) {
+        violations.push(violation('R10', Severity.HARD,
+          `第 ${index + 1} 条 say 事件写的是她对 ${toUser} 说的话——这一阶段不写她对「他」说的话，那部分由对话阶段产出`,
+          { index }));
+      } else if (!resolvedTo) {
+        // 另一种更隐蔽的越界：用 say 事件复述「她回了他什么」
+        // （summary 写成「回了一句，说还早呢，再玩会儿」）。故事里于是多出一段她的话，
+        // 而 QQ 上真正发出去的是对话阶段产出的另一句——两边永远对不上。
+        // 她回没回、回得迟不迟是可以用 act 写的事实，至于回了「什么」，这里不许替她编。
+        const blob = `${String(d?.summary ?? '')} ${String(d?.prose ?? '')}`;
+        const hit = REPLY_MARKERS.find((m) => blob.includes(m));
+        if (hit) {
+          // 提到配角名字的放行——她对配角回话属于这一阶段该写的内容
+          const castNames = castNameList(ctx);
+          const mentionsCast = castNames.some((n) => n && blob.includes(n));
+          if (!mentionsCast) {
+            violations.push(violation('R10', Severity.HARD,
+              `第 ${index + 1} 条 say 事件在复述「她回了他什么」（含「${hit}」）——这一阶段不替她写回复的内容，`
+              + '把他发消息后她回了这一句写成 act（回没回是事实，回了什么由对话阶段决定）',
+              { index }));
+          }
+        }
+      }
     }
 
     // R2 地点占用：move 的出发地必须等于当前实际所在地；目的地不能和当前相同
@@ -221,6 +424,49 @@ export function validateDrafts(drafts, timeline, ctx = {}) {
         violations.push(violation('R2', Severity.HARD,
           `第 ${index + 1} 条：移动到${PLACE_LABEL[to] ?? to}，但她此刻已经在这里了`,
           { index, to, actual: cur }));
+      }
+    }
+
+    // R13 行程一致：她写到的地方，必须是她那一刻真在的地方。
+    // 2026-10-30 事故：07:44 上车、07:48 就「最后一站到站」，5 分钟走完 30 分钟的通勤。
+    // move 现在带 arriveAt，途中 placeAt 一直是 transit —— 此刻写「到公司了」就是瞬移，
+    // 不靠词表也能拦住，因为它校验的是地点，不是措辞。
+    if (d?.kind !== EventKind.MOVE && d?.place) {
+      const actual = sim.placeAt(at);
+      if (d.place !== actual) {
+        const j = typeof sim.journeyAt === 'function' ? sim.journeyAt(at) : null;
+        const where = j
+          ? `还在路上（去${PLACE_LABEL[j.to] ?? j.to}，还剩约 ${j.remainMin} 分钟）`
+          : `在${PLACE_LABEL[actual] ?? actual}`;
+        violations.push(violation('R13', Severity.HARD,
+          `第 ${index + 1} 条写的是${PLACE_LABEL[d.place] ?? d.place}，但那一刻她${where}。`
+          + '她还在车上/路上，这一条要写路上的事，或者把地点改成她此刻真在的地方',
+          { index, place: d.place, actual }));
+      }
+    }
+
+    // R14 途中不得宣称抵达 —— R13 的措辞版。
+    // 2026-10-31 事故：08:21:48 出门去超市（路网定 5 分钟，arriveAt 08:26:48），
+    // 08:22 就写「林夏走到超市门口回头喊她快点」，08:23 直接对他说「到超市门口啦」。
+    // R13 查不出来：那些事件的 place 都老老实实填了 transit，错的是话不是字段。
+    // 路网图只管住了账（arriveAt、travel.json 的边），管不住嘴 —— 这一条补的就是嘴。
+    if (d?.kind !== EventKind.MOVE) {
+      const j = typeof sim.journeyAt === 'function' ? sim.journeyAt(at) : null;
+      if (j && j.remainMin >= 1) {
+        const claim = findArrivalClaim(`${String(d?.summary ?? '')} ${String(d?.prose ?? '')}`, j.to);
+        if (claim) {
+          const label = shortPlace(j.to);
+          // 她亲口对他说「到了」是硬拦：他会当真，下楼接、把饭端上桌，然后发现人还在路上。
+          // 旁白里的「走进雨里」「站在门口」多半只是修辞，降成 soft 记一笔，不打断生成——
+          // 硬拦一次要重跑一整轮 story，为一句措辞不值。
+          // 只有她自己的话算数：陈哥说「我那份外卖也到了」跟她到没到没关系
+          const sp = String(d?.speaker ?? '').trim();
+          const saidByHer = d?.kind === EventKind.SAY && (sp === '' || sp === 'self');
+          violations.push(violation('R14', saidByHer ? Severity.HARD : Severity.SOFT,
+            `第 ${index + 1} 条出现「${claim}」，可她那一刻还在去${label}的路上，还要约 ${j.remainMin} 分钟才到。`
+            + `路上只能写走路、风、车上、同伴说话；到${label}、下车、进门、站在门口这些，等她真到了再写`,
+            { index, claim, to: j.to, remainMin: j.remainMin, saidByHer }));
+        }
       }
     }
 
@@ -245,11 +491,32 @@ export function validateDrafts(drafts, timeline, ctx = {}) {
       }
     }
 
+    // R12 同住边界：只有林夏跟她合租。陈哥是同事，一旦出现在住处，等于把设定改成了同居。
+    // 2026-10-29 事故：叙事里写「和陈哥一起买鸭翅回去下饭」「回去看看家里还有菜」，
+    // 这段被对话阶段接着用，她转头对他说「那快开完回来吃饭」——凭空造出一个共同的家。
+    if (Array.isArray(d?.actors) && d.actors.length && !d.remote) {
+      const place = d.kind === EventKind.MOVE ? (d.to ?? d.place) : (d.place ?? sim.placeAt(at));
+      if (place === Place.HOME) {
+        for (const actorId of d.actors) {
+          const actor = ctx.registry?.get?.(actorId);
+          if (!actor || actor.kind !== 'fictional') continue;
+          const allowed = actor.presence?.places;
+          if (Array.isArray(allowed) && allowed.length && !allowed.includes(Place.HOME)) {
+            violations.push(violation('R12', Severity.HARD,
+              `第 ${index + 1} 条：${actor.displayName} 不住她那儿（只是同事/朋友），不能出现在住处——下班可以同路走一段，到路口就该各回各家`,
+              { index, actorId }));
+          }
+        }
+      }
+    }
+
     // R4 作息窗口：深夜不该在外/公司；工作时段不该在家（软）
     if (d?.kind === EventKind.MOVE) {
       const h = localHour(at);
       const to = d.to ?? d.place;
-      if (h >= 1 && h < 7 && [Place.OFFICE, Place.OUTSIDE, Place.TRANSIT].includes(to)) {
+      // 凌晨 1–7 点不该出现在「家以外」的任何地方（原来只查 office/outside/transit 三个值，
+      // 新增的公园/商场/超市/餐馆/办事会漏掉，这里改成「非 home 一律提示」）
+      if (h >= 1 && h < 7 && to && to !== Place.HOME) {
         violations.push(violation('R4', Severity.SOFT,
           `第 ${index + 1} 条：凌晨 ${h} 点移动到${PLACE_LABEL[to] ?? to}，与「夜猫子但在家」的作息不符`,
           { index, hour: h }));
@@ -313,9 +580,11 @@ export function validateDrafts(drafts, timeline, ctx = {}) {
     prevAt = Number.isFinite(at) ? at : prevAt;
   }
 
-  const hard = violations.filter((v) => HARD_RULES.has(v.rule));
-  const soft = violations.filter((v) => !HARD_RULES.has(v.rule));
+  // 判定以「规则是否硬性」为准，但 severity 可以往下调：
+  // R14 对她说出口的话是硬拦，对旁白只是记录（一句修辞不值得重跑一整轮）。
+  const hard = violations.filter((v) => HARD_RULES.has(v.rule) && v.severity === Severity.HARD);
+  const soft = violations.filter((v) => !(HARD_RULES.has(v.rule) && v.severity === Severity.HARD));
   return { violations, hard, soft, ok: violations.length === 0 };
 }
 
-export { RULES };
+export { RULES, REPLY_MARKERS };

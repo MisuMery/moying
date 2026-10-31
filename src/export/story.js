@@ -30,8 +30,37 @@ export function selectRange(events, { from, to } = {}) {
     .map((x) => x.e);
 }
 
+/**
+ * 这条事件该显示成谁说的话/做的事。
+ * 教训（2026-10-25 线上导出）：原先按 `source === 'user'` 判定「对方」，
+ * 但用户回合产出的叙事、她说的话、她的动作 source 全是 user，于是整篇
+ * 导出全是「🧑 对方」。判定必须按 kind + actors + remote，与 source 无关：
+ * source 只记录「哪个源触发的回合」，不记录「这话是谁说的」。
+ *
+ * @param {object} e 事件
+ * @param {Record<string,string>} names actor id → 显示名（控制台传入，缺失时退回 id）
+ */
+export function resolveView(e, names = {}) {
+  const label = (id) => names[id] ?? String(id).replace(/^[uc]:/, '');
+  const actors = Array.isArray(e.actors) ? e.actors : [];
+
+  // 对方发来的私聊消息：world 事件带 remote 标记
+  if (e.kind === 'world' && e.remote) return { icon: '🧑', label: '对方' };
+  if (e.kind === 'world') return KIND_VIEW.world;
+
+  if (e.kind === 'say') {
+    // say 的 actors 永远是 ['self', ...收件人]——所有 say 都是她说出口的话，
+    // 区别只在说给谁
+    const cast = actors.filter((a) => a.startsWith('c:'));
+    if (cast.length) return { icon: '💬', label: `她对${cast.map(label).join('、')}说` };
+    return { icon: '💬', label: '她说' };
+  }
+
+  return KIND_VIEW[e.kind] ?? { icon: '⚙️', label: e.kind ?? '' };
+}
+
 /** 渲染成 Markdown */
-export function renderStoryMarkdown(events, { from, to, title = '故事导出' } = {}) {
+export function renderStoryMarkdown(events, { from, to, title = '故事导出', names = {} } = {}) {
   const L = [];
   const first = events[0];
   const last = events[events.length - 1];
@@ -49,7 +78,7 @@ export function renderStoryMarkdown(events, { from, to, title = '故事导出' }
   L.push(`> 条目：${events.length} 条  `);
   L.push(`> 导出时间：${fmtDate(now)} ${fmtClock(now)}`);
   L.push('');
-  L.push('**阅读图例**：📖 叙事（完整散文）· 💬 她说出口的话 · 🧑 对方的消息 · 🌍 世界事件 · · 状态（只记录事实，不展开）');
+  L.push('**阅读图例**：📖 叙事（完整散文）· 💬 她说出口的话（含说给谁）· 🧑 对方的消息 · 🌍 世界事件 · · 状态（只记录事实，不展开）');
   L.push('');
   L.push('---');
   L.push('');
@@ -63,8 +92,7 @@ export function renderStoryMarkdown(events, { from, to, title = '故事导出' }
       lastDate = date;
     }
     const clock = fmtClock(at);
-    const isUser = e.source === 'user';
-    const view = isUser ? { icon: '🧑', label: '对方' } : (KIND_VIEW[e.kind] ?? { icon: '⚙️', label: e.kind ?? '' });
+    const view = resolveView(e, names);
     const place = e.place ? PLACE_LABEL[e.place] ?? e.place : '';
 
     if (view.icon === '📖') {

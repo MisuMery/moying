@@ -336,6 +336,18 @@ export function startConsole({ port, engine, client, store, registry, impression
         return;
       }
 
+      // 补回一条：把「他当时说的那句话」重新交给对话阶段（不新增收到消息事件）
+      if (p === '/api/reply-now' && req.method === 'POST') {
+        const body = await readBody(req).catch(() => ({}));
+        const text = String(body?.text ?? '').trim();
+        if (!text) return json(res, 400, { ok: false, error: 'text required' });
+        const userId = String(body?.userId ?? loadConfig()?.allowedUsers?.[0] ?? '');
+        if (!userId) return json(res, 400, { ok: false, error: 'no userId' });
+        const result = await engine.forceReply({ userId, text });
+        json(res, 200, { ok: true, result });
+        return;
+      }
+
       if (p === '/api/cast' && req.method === 'GET') {
         json(res, 200, { actors: registry.toJSON(), cast: loadCast() });
         return;
@@ -612,11 +624,15 @@ export function startConsole({ port, engine, client, store, registry, impression
         const from = url.searchParams.get('from') || null;
         const to = url.searchParams.get('to') || null;
         const events = selectRange(store.loadEvents(), { from, to });
+        // 角色 id → 显示名：导出时「她对室友说」要能写出名字，不能露 c:linxia 这种裸 id
+        const names = Object.fromEntries(
+          (registry?.toJSON?.() ?? []).map((a) => [a.id, a.displayName ?? a.id]),
+        );
         if (fmt === 'json') {
           json(res, 200, renderStoryJson(events, { from, to }));
           return;
         }
-        const md = renderStoryMarkdown(events, { from, to, title: '故事导出' });
+        const md = renderStoryMarkdown(events, { from, to, title: '故事导出', names });
         const buf = Buffer.from(md, 'utf8');
         const name = `story-${(from ?? 'all').slice(0, 10)}-${(to ?? 'now').slice(0, 10)}.md`;
         res.writeHead(200, {

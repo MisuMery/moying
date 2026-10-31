@@ -79,6 +79,7 @@ export class StickerStore {
       desc: String(input.desc ?? '').slice(0, MAX_DESC),
       tags: (Array.isArray(input.tags) ? input.tags : []).map((t) => String(t).trim().slice(0, 40)).filter(Boolean).slice(0, MAX_TAGS),
       source: input.source ?? 'console',
+      ...(input.hash ? { hash: String(input.hash) } : {}),
       createdAt: new Date().toISOString(),
     };
     this.data.stickers.push(entry);

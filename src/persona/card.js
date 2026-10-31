@@ -10,6 +10,7 @@ import path from 'node:path';
 import { DATA_DIR, loadConfig } from '../config.js';
 import { ActorRegistry, createFictional, createSelf } from '../cast/actors.js';
 import { resolveRelationStage, effectiveRedlines } from './relationship.js';
+import { localWeekday } from '../world/time.js';
 
 export const PERSONA_PATH = path.join(DATA_DIR, 'persona.json');
 // 开源友好：角色本体、配角、用户三者分开存放，方便别人替换其中任意一块
@@ -127,6 +128,24 @@ export function renderIdentity(persona) {
 }
 
 /**
+ * 地理关系（恒定注入）。
+ * 2026-10-29 线上事故：她发「晚上旧书摊还去不」，被问「啊？我吗」后答「不然喃 / 上周说的」——
+ * 两人根本不在同一座城市，而且时间轴里从来没有过这个约定。根因是「距离」这件事
+ * 从来没被写进任何提示词，模型就默认成同城可随时见面，还把跟室友的线下安排
+ * 顺手算到了他头上。这里把「异地」当成事实写死，并在两个阶段都注入。
+ */
+export function renderGeography(persona) {
+  const g = persona?.geography;
+  if (!g) return '';
+  const lines = ['<你和他之间隔着距离（这是事实，不是气氛）>'];
+  if (g.selfSide) lines.push(`你在这边：${g.selfSide}`);
+  if (g.userSide) lines.push(`他在那边：${g.userSide}`);
+  if (g.note) lines.push(String(g.note));
+  lines.push('</你和他之间隔着距离>');
+  return lines.join('\n');
+}
+
+/**
  * 按亲密度选说话阶段：关系越近话才越多。
  * 当前（亲密度低）走「疏离期」，严格对齐 HDS 最近实测的习惯（平均 3.7 字、一轮 1.7 条）。
  */
@@ -238,8 +257,17 @@ export function renderSpeechRules(persona, stage = null, hour = null) {
     if (a.forbidden?.length) parts.push(`禁用称呼：${a.forbidden.join('、')}`);
     if (parts.length) lines.push('', `- ${parts.join('；')}`);
   }
-  // 表情
-  if (s.emoji?.note) lines.push('', `- 表情：${s.emoji.note}`);
+  // 表情：政策只写在这里（控制台 → 角色卡 → 说话方式 → 表情）。
+  // 之前对话契约里还硬编码了一份「每三四条带一个」，两处不同步，
+  // 结果是关也关不掉。现在只有这一个开关。
+  if (s.emoji && s.emoji.enabled === false) {
+    lines.push('', '- 表情：**一条都不许发**——不用 QQ 表情、不写 [表情:xxx]、不用 emoji 字符、不用颜文字、不甩贴纸。整段对话纯文字。');
+  } else {
+    if (s.emoji?.note) lines.push('', `- 表情：${s.emoji.note}`);
+    if (Array.isArray(s.emoji?.avoid) && s.emoji.avoid.length) {
+      lines.push('', `- 绝对不要用这些表情：${s.emoji.avoid.join(' ')}（显得敷衍、阴阳怪气，让人不舒服）`);
+    }
+  }
   // 当代口语白名单
   if (s.modernSlang?.whitelist?.length) {
     lines.push('', `- 当代口语白名单（白名单外一律不用）：${s.modernSlang.whitelist.join('、')}`);
@@ -300,6 +328,77 @@ export function workSchedule(persona) {
   };
 }
 
+/**
+ * 班表与位置的期望（注入世界阶段）。
+ *
+ * 根因：位置由 move 事件序列派生，起点默认 home；角色卡只有散文式 workHours，
+ * 没有任何代码把「上班时段」用于驱动她去公司。模型只看到事实块写「她在家」，
+ * 又只收到泛泛的「继续她的生活」，于是工作日也把她写成在家做本职工作。
+ *
+ * 这里只「告知期望 + 让她结合已发生事实自行判断」，不硬性禁止在家——
+ * 周末/节假日在家、工作日请假/生病/临时居家办公都合法，必须保留。
+ *
+ * @param {object} persona
+ * @param {number} now
+ */
+export function renderScheduleExpectation(persona, now = Date.now()) {
+  const WEEK = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+  const sc = workSchedule(persona);
+  const wd = localWeekday(now);
+  const isWorkday = sc.workdays.includes(wd);
+  const commuteH = (sc.commuteMinutes || 0) / 60;
+  const h = hourFloat(now);
+
+  // 工作日她「应在公司/通勤」的窗口：上班前（含出门准备与通勤）+ 上班中 + 下班通勤缓冲。
+  // 上班前多给 1 小时准备余量，避免把「在家吃早饭/换衣准备出门」误判成居家办公。
+  const awayStart = sc.from - commuteH - 1;
+  const awayEnd = sc.to + commuteH;
+  const shouldBeAway = isWorkday && h >= awayStart && h < awayEnd;
+
+  if (!isWorkday) {
+    return [
+      '<班表与位置>',
+      `今天是${WEEK[wd]}（休息日/非班）。她在家是常态，按居家日常写即可，无需去公司。`,
+      '若故事里已经写明她今天临时在家处理工作（居家办公），那是例外、照常写；但没有这类事实时不要主动写成在上班。',
+      '</班表与位置>',
+    ].join('\n');
+  }
+
+  const fromLabel = fmtHourFloat(sc.from);
+  const toLabel = fmtHourFloat(sc.to);
+  const base =
+    `她的班表：每周${sc.workdays.map((d) => WEEK[d]).join('、')}上班，` +
+    `${fromLabel}–${toLabel}` +
+    (sc.commuteMinutes ? `（含约 ${sc.commuteMinutes} 分钟通勤）` : '') +
+    `。今天是${WEEK[wd]}（工作日）。`;
+
+  let reconcile;
+  if (shouldBeAway) {
+    reconcile = [
+      '基线：今天是工作日且处于上班/通勤时段，她「应该已经在公司或通勤路上」，不是在家。',
+      '纠正规则：如果近期事件或叙事里她在「家做本职工作」（画图、改稿、写文档、回工作消息等），' +
+      '但故事并没有写她今天请假/生病/临时居家办公——那是错误的定位，必须纠正，不要顺着写下去。',
+      '做法：请写一条 move（from=home、to=office；想表现通勤就 to=transit），时间写此刻这一刻；' +
+      '随后写她到工位/在公司做事的叙事。不要再写「在家干活 / 在家办公」。',
+      '例外：只有故事已明确写她今天请假/生病/居家办公时，才继续写在家，并照实写原因。',
+    ].join('\n');
+  } else {
+    reconcile = [
+      '现在是非上班时段。清晨她可在家洗漱、吃早饭、准备出门（这是出门前，不是在家办公）；晚上已下班则她应在家休息。',
+      '工作日居家只限「已请假日/生病/临时居家」这类故事里已写明的情况，没有这类事实时不要写成在家办公。',
+    ].join('\n');
+  }
+
+  return ['<班表与位置>', base, reconcile, '</班表与位置>'].join('\n');
+}
+
+/** 浮点钟点（9.5 → "09:30"）转可读标签 */
+function fmtHourFloat(h) {
+  const hh = Math.floor(h);
+  const mm = Math.round((h - hh) * 60);
+  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+}
+
 /** 带小数的钟点（13:30 → 13.5），时区跟着配置走 */
 export function hourFloat(now = Date.now(), tz = null) {
   const parts = new Intl.DateTimeFormat('en-CA', {
@@ -327,7 +426,7 @@ export function renderVagueness(persona) {
     ...list.map((x, i) => `${i + 1}. ${x}`)].join('\n');
 }
 
-/** 关系锚点已迁到 relationship.json（在「用户与关系」里改），此处不再从角色卡读 */
+/** 白月光关系锚点已迁到 relationship.json（在「用户与关系」里改），此处不再从角色卡读 */
 export function renderRelationshipAnchor() {
   return '';
 }
@@ -348,12 +447,61 @@ export function renderRedlines(persona, stage = null) {
 }
 
 /** 配角块：明确列出哪些是故事内人物，以及他们不可能收到消息 */
+/** 地点 id → 中文。把 cast.presence 翻译成人话，供提示词使用 */
+const PLACE_CN = {
+  home: '住处', office: '公司', transit: '路上/地铁', park: '公园', mall: '商场',
+  market: '超市/菜场', food: '餐馆', errand: '办事途中', outside_social: '外面的社交场合', other: '别处',
+};
+
+/** 跟她住在一起的人：presence.places 含 home 的角色。数据在控制台「其他角色 → 能出现的地点」里改 */
+export function livingWith(persona) {
+  return (persona?.cast ?? []).filter((c) => (c.presence?.places ?? []).includes('home'));
+}
+
+/**
+ * 从 cast.presence 推导「谁住哪儿」——不写死任何名字。
+ * 2026-10-29 的教训：陈哥的 presence 里本来就没有 home，数据是对的，
+ * 但提示词只渲染了名字+身份+设定，模型看不到这条边界，就把他写进了家里。
+ * 现在这条规则由数据生成：改一个地点，全链路自动跟着变，不用再改代码。
+ */
+export function renderLivingRules(persona) {
+  const cast = persona?.cast ?? [];
+  if (!cast.length) return '';
+  const atHome = livingWith(persona);
+  const away = cast.filter((c) => {
+    const p = c.presence?.places;
+    return Array.isArray(p) && p.length && !p.includes('home');
+  });
+  if (!atHome.length && !away.length) return '';
+  const lines = ['<谁住在你那儿（按角色设定推出来的，不是气氛）>'];
+  if (atHome.length) {
+    lines.push(`跟你住在一起：${atHome.map((c) => `${c.displayName}（${c.relation}）`).join('、')}。`);
+    lines.push('只有他们能出现在你住的地方、参与你的居家生活（做饭、留饭、等你回来、一起吃饭）。');
+  } else {
+    lines.push('你一个人住。');
+  }
+  for (const c of away) {
+    const scope = (c.presence.places ?? []).map((p) => PLACE_CN[p] ?? p).join('、');
+    lines.push(`${c.displayName}不住你那儿（${c.relation}）：活动范围是${scope}。`
+      + '可以下班顺路走一段、路上买杯东西，但到该分开的地方就各走各的；他不进你的住处，也不参与你的居家生活。');
+  }
+  lines.push('以上是设定。任何把他叫回「家」的话（回来吃饭 / 给你留饭 / 等你回来），都违背了这条设定。');
+  lines.push('</谁住在你那儿>');
+  return lines.join('\n');
+}
+
 export function renderCast(persona) {
   const cast = persona?.cast ?? [];
   if (!cast.length) return '';
   return [
     '故事内人物（他们只活在叙事里，你发给他们的任何话都只会写进剧本，不会真的发出去）：',
-    ...cast.map((c) => `- ${c.displayName}（${c.relation}）：${String(c.notes ?? '').slice(0, 120)}`),
+    ...cast.map((c) => {
+      const places = (c.presence?.places ?? []).map((p) => PLACE_CN[p] ?? p);
+      let scope = '';
+      if (c.presence?.remoteOnly) scope = '只能远程联系，不会出现在你身边';
+      else if (places.length) scope = `会出现在：${places.join('、')}`;
+      return `- ${c.displayName}（${c.relation}）${scope ? `｜${scope}` : ''}：${String(c.notes ?? '').slice(0, 400)}`;
+    }),
   ].join('\n');
 }
 

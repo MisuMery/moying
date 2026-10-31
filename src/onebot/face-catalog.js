@@ -16,6 +16,14 @@ function dataDir() {
   return process.env.QQ_AGENT_DATA_DIR || path.join(process.cwd(), 'data');
 }
 
+/** 把目录落盘：在线拉到的新表情也存下来，重启后即使拉取失败也还有表可用 */
+function persistOffline() {
+  try {
+    fs.mkdirSync(dataDir(), { recursive: true });
+    fs.writeFileSync(path.join(dataDir(), 'face-names.json'), JSON.stringify({ bySid }, null, 2), 'utf8');
+  } catch { /* 写不了就算了，不影响这一轮运行 */ }
+}
+
 function rebuildNameIndex() {
   const index = new Map();
   for (const [sid, name] of Object.entries(bySid || {})) {
@@ -77,7 +85,10 @@ export async function refreshFaceCatalog(client) {
         added += 1;
       }
     }
-    if (added > 0) rebuildNameIndex();
+    if (added > 0) {
+      rebuildNameIndex();
+      persistOffline();
+    }
     return added > 0;
   } catch {
     return false;

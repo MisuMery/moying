@@ -4,12 +4,24 @@
 // 无法被程序校验 —— 16:23 出了门，18:27 模型照样能再写一次「她出门」。
 // 这里反过来：prose 只是 WorldEvent 的渲染产物，状态由 move 事件序列派生。
 
-import { toMs, fmtDate } from './time.js';
+import { toMs, fmtDate, sortEventsByTime } from './time.js';
 
+/**
+ * 地点枚举。
+ * 之前只有 home/office/transit/outside_social/other 五个，模型根本没有词可以表达
+ * 真实城市生活，于是她的世界被压成「家 ↔ 公司」两点一线（线上证据：全部历史 move
+ * 目的地只出现过 home/office/outside_social/other 四个值，近 24h 只有 home→office→home）。
+ * 这里补上真实都市里她真的会去的场所，让「外出」有内容、能被时间轴校验和渲染。
+ */
 export const Place = {
   HOME: 'home',
   OFFICE: 'office',
   TRANSIT: 'transit',
+  PARK: 'park',
+  MALL: 'mall',
+  MARKET: 'market',
+  FOOD: 'food',
+  ERRAND: 'errand',
   OUTSIDE: 'outside_social',
   OTHER: 'other',
 };
@@ -18,9 +30,33 @@ export const PLACE_LABEL = {
   [Place.HOME]: '在家',
   [Place.OFFICE]: '公司',
   [Place.TRANSIT]: '路上',
-  [Place.OUTSIDE]: '外面',
+  [Place.PARK]: '公园/江边',
+  [Place.MALL]: '商场/商圈',
+  [Place.MARKET]: '超市/菜场',
+  [Place.FOOD]: '餐馆/小吃店',
+  [Place.ERRAND]: '办事（银行/快递/物业等）',
+  [Place.OUTSIDE]: '外面（和熟人聚会）',
   [Place.OTHER]: '别处',
 };
+
+/** 注入提示词的地点词表：告诉模型 move 的 to / 事件的 place 可以填哪些值 */
+export const PLACE_VOCAB = [
+  `${Place.HOME}＝家、住处`,
+  `${Place.OFFICE}＝公司、办公室（含会议室、工位、茶水间）`,
+  `${Place.TRANSIT}＝路上（地铁、公交、骑车、步行途中）`,
+  `${Place.PARK}＝公园、江边、广场、小区花园（散步、坐着发呆、遛弯）`,
+  `${Place.MALL}＝商场、商业街、步行街、服装店（逛街、买东西、闲逛）`,
+  `${Place.MARKET}＝超市、菜市场、便利店、水果店（买菜、买日用品、囤零食）`,
+  `${Place.FOOD}＝餐馆、小吃店、面馆、奶茶店、外卖自取（吃饭、喝东西）`,
+  `${Place.ERRAND}＝办事：银行、快递驿站、医院、诊所、物业、政务大厅、修手机`,
+  `${Place.OUTSIDE}＝和熟人在一起：同事聚餐、朋友约饭、和室友出门`,
+  `${Place.OTHER}＝以上都不合适的别处`,
+].join('\n');
+
+/** 她是否还在外面（不在家） */
+export function isAway(place) {
+  return place != null && place !== Place.HOME;
+}
 
 export const EventKind = {
   MOVE: 'move',
@@ -37,7 +73,8 @@ export class Timeline {
    * @param {string} startPlace 故事起点所在地点
    */
   constructor(events = [], startPlace = Place.HOME) {
-    this.events = [...events].sort((a, b) => toMs(a.at) - toMs(b.at));
+    // 排序规则与存储层同一份（sortEventsByTime）：同时间戳保持写入顺序，坏时间排末尾
+    this.events = sortEventsByTime(events);
     this.startPlace = startPlace;
   }
 
@@ -61,17 +98,32 @@ export class Timeline {
   occupancy() {
     // move 在这个引擎里**就是她的位移**（同行的其他人写在 actors 里），
     // 其他角色的移动用 act 表达 —— 所以这里不需要再按 actors 过滤。
+    //
+    // 2026-10-30：move 现在可以带 arriveAt（出发时刻 + 路程时长）。
+    // 从出发到到达之间她**在路上**（transit），不是已经到了——
+    // 否则「07:44 上车、07:48 到站」这种瞬移在状态层就成立了，拦都拦不住。
     const intervals = [];
     let cur = { place: this.startPlace, from: Number.NEGATIVE_INFINITY, to: null };
+    let lastEnd = Number.NEGATIVE_INFINITY;
     for (const e of this.events) {
       if (e.kind !== EventKind.MOVE) continue;
-      const at = toMs(e.at);
-      if (!Number.isFinite(at)) continue;
+      const dep = toMs(e.at);
+      if (!Number.isFinite(dep)) continue;
       const to = e.to ?? e.place;
       if (!to) continue;
-      cur.to = at;
+      let arr = toMs(e.arriveAt);
+      // 没有 arriveAt 的历史事件按瞬时位移处理，行为与改动前一致
+      if (!Number.isFinite(arr) || arr < dep) arr = dep;
+      const start = Math.max(dep, lastEnd);
+
+      cur.to = start;
       intervals.push(cur);
-      cur = { place: to, from: at, to: null };
+      if (arr > start) {
+        // 途中：地点是 transit，但带着这段行程的 id，方便查出「还有多久、到哪一段了」
+        intervals.push({ place: Place.TRANSIT, from: start, to: arr, journeyId: e.id ?? null, headingTo: to });
+      }
+      cur = { place: to, from: Math.max(arr, start), to: null };
+      lastEnd = Math.max(arr, start);
     }
     intervals.push(cur);
     return intervals;
@@ -89,6 +141,33 @@ export class Timeline {
   /** 当前所在地点 */
   currentPlace(now = Date.now()) {
     return this.placeAt(now);
+  }
+
+  /**
+   * 此刻是否在途中。在途时返回这段行程，否则 null。
+   * @returns {{move:object, to:string, mode:string, departAt:number, arriveAt:number, remainMin:number}|null}
+   */
+  journeyAt(ms = Date.now()) {
+    let last = null;
+    for (const e of this.events) {
+      if (e.kind !== EventKind.MOVE) continue;
+      const dep = toMs(e.at);
+      if (!Number.isFinite(dep)) continue;
+      if (dep > ms) break;
+      last = e;
+    }
+    if (!last) return null;
+    const dep = toMs(last.at);
+    const arr = toMs(last.arriveAt);
+    if (!Number.isFinite(arr) || ms >= arr) return null;
+    return {
+      move: last,
+      to: last.to ?? last.place,
+      mode: last.mode ?? null,
+      departAt: dep,
+      arriveAt: arr,
+      remainMin: Math.max(1, Math.ceil((arr - ms) / 60000)),
+    };
   }
 
   /**
@@ -128,7 +207,9 @@ export class Timeline {
   /** 追加已校验事件 */
   commit(events) {
     for (const e of events) this.events.push(e);
-    this.events.sort((a, b) => toMs(a.at) - toMs(b.at));
+    // 与构造同一套排序：新事件的时间可能早于末尾（合并批次、补记的 act），
+    // 单纯 push 会破坏升序，后面 lastEvent()/最近 N 条就取错。
+    this.events = sortEventsByTime(this.events);
     return this;
   }
 
