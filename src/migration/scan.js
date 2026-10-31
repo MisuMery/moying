@@ -7,8 +7,13 @@ import sqlite3 from 'node:sqlite';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const DB = process.argv[2] || '/root/.codebuddy/artifact/2f8a7d30-9c21-4f0b-1d48-f09142949000/k_new.db';
-const OUT = process.argv[3] || '/workspace/moying/data/legacy-audit.md';
+const DB = process.argv[2];
+const OUT = process.argv[3] || path.join('data', 'legacy-audit.md');
+
+if (!DB) {
+  console.error('用法：node src/migration/scan.js <旧 koishi.db 路径> [输出报告路径]');
+  process.exit(1);
+}
 
 // 位移信号：从散文里识别「她离开了家 / 回到了家 / 到了公司 / 在通勤」
 const SIGNAL = [

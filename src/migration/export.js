@@ -13,8 +13,13 @@ import sqlite3 from 'node:sqlite';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const DB = process.argv[2] || '/root/.codebuddy/artifact/2f8a7d30-9c21-4f0b-1d48-f09142949000/k_new.db';
-const OUT_DIR = process.argv[3] || '/workspace/moying/data';
+const DB = process.argv[2];
+const OUT_DIR = process.argv[3] || path.join('data');
+
+if (!DB) {
+  console.error('用法：node src/migration/export.js <旧 koishi.db> [输出目录]');
+  process.exit(1);
+}
 const RETCON_PATH = path.join(OUT_DIR, 'retcon.json');
 
 const MOVE_RULES = [
