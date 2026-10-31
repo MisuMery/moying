@@ -34,10 +34,24 @@ test('主动: 睡着的时候绝不会找他', () => {
   assert.match(v.reason, /睡/);
 });
 
-test('主动: 刚说过话还在冷却里，不会马上又找他', () => {
-  const v = evaluateUrge({ asleep: false, busy: false, hour: 21, minutesSince: 10, stageId: 'attached' }, undefined);
+test('主动: 她刚主动找过还在冷却里，不会马上又找他', () => {
+  // 2026-10-28 重写：冷却只拦「她自己主动」（旧版任何对话都重置冷却，导致她永远不主动）
+  const v = evaluateUrge({ asleep: false, busy: false, hour: 21, minutesSinceOwn: 10, minutesSinceContact: 10, stageId: 'attached' }, undefined);
   assert.equal(v.want, false);
   assert.match(v.reason, /冷却/);
+});
+
+test('主动: 刚聊完的短时间内不再冒出来（对话间隔门槛）', () => {
+  const v = evaluateUrge({ asleep: false, busy: false, hour: 21, minutesSinceContact: 5, stageId: 'attached' }, undefined);
+  assert.equal(v.want, false);
+  assert.match(v.reason, /刚刚还在聊/);
+});
+
+test('主动: 他刚聊过不该把她自己的主动性锁死', () => {
+  // 回归（2026-10-28 bug）：对话过了 20 分钟（旧版 45 分钟冷却会拦），她自己 10 小时没主动过，
+  // 有新鲜事就该能冒出来。
+  const v = evaluateUrge({ asleep: false, busy: false, hour: 21, minutesSinceContact: 20, minutesSinceOwn: 600, stageId: 'attached', hasNews: true, rand: () => 0.01 }, undefined);
+  assert.equal(v.want, true, `对话冷却不应锁死她自己的主动性: ${v.reason}`);
 });
 
 test('主动: 关系越近越容易主动找他', () => {

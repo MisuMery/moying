@@ -70,7 +70,7 @@ test('P2: 当日时间轴视图包含已知位移，且给出禁止动作提示'
   ], Place.HOME);
   const block = renderWorldBlock(timeline, Date.parse(T('18:27')));
   assert.match(block, /当日时间轴 2026-10-24/);
-  assert.match(block, /现在 18:27/);
+  assert.match(block, />>> 现在 2026-10-24 周六 18:27/);
   assert.match(block, /不得写「出门/, '应明确禁止再写出门');
 });
 

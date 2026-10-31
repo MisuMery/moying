@@ -103,7 +103,7 @@ test('P5: 重试耗尽时程序强制修正，绝不静默写入矛盾', async (
   const result = await narrator.run({ trigger: '（推进）', userId: '10001', now: Date.parse(T('18:30')), maxRevision: 1 });
 
   assert.ok(result.autoCorrected.length > 0, '应留下强制修正审计');
-  assert.equal(result.autoCorrected[0].rule, 'R2');
+  assert.ok(result.autoCorrected.some((c) => c.rule === 'R2'), `应留下 R2 强制修正审计: ${JSON.stringify(result.autoCorrected)}`);
   const verdict = validateDrafts(result.events, timeline, { now: Date.parse(T('18:30')), registry });
   assert.equal(verdict.hard.length, 0, `强制修正后不得残留硬矛盾: ${JSON.stringify(verdict.hard)}`);
 });

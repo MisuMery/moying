@@ -51,11 +51,16 @@ test('门控: 问句基本都会回（不回很奇怪）', () => {
   assert.ok(v.probability >= 0.8, `问句概率应很高，实际 ${v.probability}`);
 });
 
-test('门控: 忙的时候意愿打折、回复更慢', () => {
+test('门控: 忙的时候回复更慢；高保底场景折扣仍可见', () => {
+  // 2026-10-31 语义：忙的体感交给 busyDelayMs（回复慢两分多钟），概率由亲密度保底兜底——
+  // 「该回的总会回，只是慢」。折扣在保底之下的区间依然生效（问句 1 → 0.915 可见）。
   const free = evaluateWillingness({}, { now: Date.now(), text: '在干嘛', hour: 15, busy: false }, cfg, always);
   const busy = evaluateWillingness({}, { now: Date.now(), text: '在干嘛', hour: 15, busy: true }, cfg, always);
-  assert.ok(busy.probability < free.probability, '忙的时候概率应更低');
   assert.ok(busy.delayMs > free.delayMs, '忙的时候回复更慢');
+  assert.ok(busy.probability >= 0.8, `忙也有亲密度保底，实际 ${busy.probability}`);
+  const freeQ = evaluateWillingness({}, { now: Date.now(), text: '晚上想吃什么？', hour: 15, busy: false }, cfg, always);
+  const busyQ = evaluateWillingness({}, { now: Date.now(), text: '晚上想吃什么？', hour: 15, busy: true }, cfg, always);
+  assert.ok(busyQ.probability < freeQ.probability, '问句高保底场景下忙的折扣仍应可见');
 });
 
 test('门控: 回复一次后意愿被扣，不会条条秒回', () => {
@@ -65,11 +70,16 @@ test('门控: 回复一次后意愿被扣，不会条条秒回', () => {
   assert.ok(v1.score < v1.rawScore, '回复后应扣分');
 });
 
-test('门控: quiet 档比 normal 更冷淡', () => {
+test('门控: quiet 档门槛更高、扣分更重；保底不受档位影响', () => {
+  // 2026-10-31 语义：quiet 的冷淡体现在「意愿门槛高、回复扣分重」——
+  // 而最终概率由亲密度保底兜底，不因档位冷淡把该回的消息吞掉。
   const quiet = resolveWillingness({}, 'quiet');
-  const n = evaluateWillingness({}, { now: Date.now(), text: '在干嘛', hour: 15 }, cfg, always);
+  const n = resolveWillingness({}, 'normal');
+  assert.ok(quiet.threshold > n.threshold, `quiet 门槛应更高：${quiet.threshold} vs ${n.threshold}`);
+  assert.ok(quiet.replyCost > n.replyCost, `quiet 扣分应更重：${quiet.replyCost} vs ${n.replyCost}`);
   const q = evaluateWillingness({}, { now: Date.now(), text: '在干嘛', hour: 15 }, quiet, always);
-  assert.ok(q.probability < n.probability, `quiet 应更冷淡：${q.probability} vs ${n.probability}`);
+  const m = evaluateWillingness({}, { now: Date.now(), text: '在干嘛', hour: 15 }, n, always);
+  assert.equal(q.probability, m.probability, '亲密度保底对两个档位一视同仁');
 });
 
 // ---------- 字数限流 ----------
@@ -108,7 +118,7 @@ test('限流: 条数上限同样生效', () => {
 
 test('合并: 连续多条消息攒成一个回合', async () => {
   const flushed = [];
-  const inbox = new Inbox({ onFlush: (userId, msgs) => flushed.push({ userId, msgs }) });
+  const inbox = new Inbox({ onFlush: (userId, msgs) => flushed.push({ userId, msgs }), settleMs: 50, maxWaitMs: 400, retryDelayMs: 100 });
   inbox.push('1001', { text: '第一条' }, 300);
   inbox.push('1001', { text: '第二条', }, 300);
   inbox.push('1001', { text: '第三条' }, 300);
@@ -119,13 +129,28 @@ test('合并: 连续多条消息攒成一个回合', async () => {
 });
 
 test('合并: 后续消息不会无限延后回复', async () => {
+  // 短间隔连发：deadline 不动；顺延只发生在「他还在发、且静默窗口还没到」时，
+  // 并有 firstDeadline + maxWaitMs 的硬天花板（绝不饿死）。
   const flushed = [];
-  const inbox = new Inbox({ onFlush: (uid, msgs) => flushed.push(msgs) });
+  const inbox = new Inbox({ onFlush: (uid, msgs) => flushed.push(msgs), settleMs: 50, maxWaitMs: 400, retryDelayMs: 100 });
   const r1 = inbox.push('1002', { text: '第一条' }, 300);
   const r2 = inbox.push('1002', { text: '第二条' }, 300);
-  assert.equal(r1.deadline, r2.deadline, 'deadline 不应被后续消息推后');
+  assert.equal(r2.deadline, r1.deadline, '短间隔连发不应推后 deadline');
   await new Promise((r) => setTimeout(r, 500));
   assert.equal(flushed.length, 1);
+});
+
+test('合并: 他还在连着发时顺延，但不超过天花板', async () => {
+  const flushed = [];
+  const inbox = new Inbox({ onFlush: (uid, msgs) => flushed.push(msgs), settleMs: 80, maxWaitMs: 300, retryDelayMs: 100 });
+  const r1 = inbox.push('1003', { text: '第一条' }, 300);
+  await new Promise((r) => setTimeout(r, 280)); // 快到 deadline 时他又发来一条
+  const r2 = inbox.push('1003', { text: '第二条' }, 300);
+  assert.ok(r2.deadline > r1.deadline, '话没说完应顺延（不抢话）');
+  assert.ok(r2.deadline <= r1.deadline + 300 + 50, `不超过 firstDeadline+maxWait 天花板: ${r2.deadline - r1.deadline}ms`);
+  await new Promise((r) => setTimeout(r, 600));
+  assert.equal(flushed.length, 1, '顺延后到点只触发一次');
+  assert.equal(flushed[0].length, 2, '两条合并成一个回合');
 });
 
 // ---------- 表情 ----------
