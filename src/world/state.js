@@ -231,6 +231,15 @@ export class Timeline {
     if (!last) return null;
     const f = toMs(last.span.from);
     const t = toMs(last.span.to);
+    // 换地点即中断（借 HDS-Interlude 的 localBoundary 思路：位置一变，局部状态整体作废）。
+    // 她在这件事进行期间又挪了地方，说明这件事已经放下了——不需要去判断「手里的奶茶
+    // 还拿不拿着」，一个 move 就够了。没有这条，「她已经在三楼了，系统还认为她在试衣服」
+    // 只能靠 span 自己过期来兜，而 span 一旦算长就会错得很离谱。
+    for (const e of this.events) {
+      if (e.kind !== EventKind.MOVE) continue;
+      const at = toMs(e.at);
+      if (Number.isFinite(at) && at > f && at <= ms) return null;
+    }
     return {
       activity: String(last.summary ?? last.place ?? '做事'),
       place: last.place ?? this.placeAt(ms),

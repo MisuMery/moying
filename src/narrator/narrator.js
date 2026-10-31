@@ -10,7 +10,7 @@ import {
   validateDrafts, validateNarration, sanitizeNarration, sanitizeOwnSays, narrationTooShort, Severity, REPLY_MARKERS,
 } from '../world/validator.js';
 import { renderWorldBlock, nameResolver } from '../world/view.js';
-import { Timeline, Place, EventKind, PLACE_VOCAB } from '../world/state.js';
+import { Timeline, Place, EventKind, PLACE_VOCAB, PLACE_LABEL } from '../world/state.js';
 import { resolveSpeech } from '../world/speech.js';
 import { toISO, toMs } from '../world/time.js';
 import { planMove, renderKnownRoutes } from '../world/travel.js';
@@ -31,8 +31,10 @@ export const CONTRACT = `你必须只输出一个 JSON 对象，不要有任何�
   "bondDelta": 0,
   "events": [
     {
-      "at": "2026-10-24T10:27:00Z",
       "kind": "move | act | say | world",
+      "durationMinutes": "这件事占用多少分钟——**持续动作必填**（试衣服/喝奶茶/逛街/排队/做饭/洗澡/等车/化妆……），瞬时动作填 0 或不填（说一句、看一眼、拿起手机）。按真实生活估，别为了赶剧情写短。程序用它算出「她到几点还在做这件事」。",
+      "summary": "一句话摘要（会进入时间轴，务必简短）",
+      "at": "只用来表示先后顺序，程序会按本轮演化窗口重排全部时刻，你不必精确估时、也不必换算时区",
       "from": "仅 move 需要：出发地（用下面地点词表里的 id，且必须等于她此刻实际所在地）",
       "to": "仅 move 需要：目的地（用下面地点词表里的 id）",
       "mode": "仅 move 需要：怎么去的——walk | bike | bus | metro | taxi | train | plane",
@@ -41,10 +43,7 @@ export const CONTRACT = `你必须只输出一个 JSON 对象，不要有任何�
       "speaker": "仅 say 需要：这句话是谁说的——她说写 self，配角说写 c:xxx",
       "to": "仅 say 需要：说给谁——对配角说写 c:xxx，自言自语留空；绝不许写 u:（对「他」说的话不在这阶段写）",
       "actors": ["c:roommate"],
-      "span": { "from": "...", "to": "..." },
-      "remote": false,
-      "summary": "一句话摘要（会进入时间轴，务必简短）",
-      "durationMinutes": "持续动作才需要：这件事大概占用多少真实分钟（试衣服/喝奶茶/逛店/排队/做饭/洗澡/等车/化妆……）。瞬时动作（说一句、看一眼、拿起手机）不填或填 0。按真实生活估，别为了赶剧情写短。"
+      "remote": false
     }
   ]
 }
@@ -72,11 +71,12 @@ narration 与 events 的分工（不要搞反）：
 - **已经发生过的信息交换不许再来一遍**：配角问过的事（比如室友已经问过她「跟谁聊」、她已经答过）就写进 events 当事实定下来，这一段不许再问第二次、也不许她再答第二次——那会显得人物失忆。
 - **角色之间的关键问答必须落成 event**（kind=act 或 say，actors 带上那个角色，summary 写清「谁问了什么 / 得到什么回答」）。这是下一段接续的唯一依据：不写下来，下一段就不知道这件事已经发生过，又会重复一遍。
 - 时间不得倒流，也不得超过当前时间；move 的 from 必须等于她那一刻实际所在地点。
-- **事件的 at 只是参考，落库时程序一律以服务器当前时间为准重打，你不必精确估时；格式用 UTC（结尾 Z），不要写 +08:00。**
-- **事件时间写到分钟即可**（不要带秒）；会比下面给的「此刻」早零点几秒不算倒流，程序按同一时刻处理，不用紧张。
+- **所有时刻由程序排定**：你写的 at 只用来表达先后顺序，程序会按本轮演化窗口（下面会给）把整批事件重排成真实时间轴。不必换算时区，不必猜 UTC，也不要在 at 里写具体几点几分。
+- **不要写 span**：任何事件都不需要起止时刻，写了也会被丢弃。持续动作只填 durationMinutes，起止由程序算。
+- **所有持续时间加起来必须装得进本轮窗口**：窗口只有 8 分钟，就别安排「逛商场＋试衣服＋喝奶茶」这种半小时起步的流程。装不下程序会按比例压缩，人物就会显得在赶场。
 - move 只用于**她自己**的位移（同行的其他人写进 actors，她自己不用写）；其他角色的移动用 act 表达，place 填该角色此刻所在的地方（例：「室友出门上班」→ kind=act、actors=["c:roommate"]、place="office"）。
 
-**持续动作要带 durationMinutes（事件里的数字字段）**：只要是一段需要时间的事（试衣服、喝奶茶、逛街、排队、做饭、洗澡、等车、化妆……）就填上大概占多少分钟。这一条决定她接下来多久都「在忙这件事」——程序会用它算出她「正在做这件事」的时间段，这段时间她能继续这件事、能分心想别的，但不能凭空「做完了」。别为了把剧情往前赶就把所有事都写成一瞬间完成。
+**持续动作要带 durationMinutes（事件里的数字字段）**：只要是一段需要时间的事（试衣服、喝奶茶、逛街、排队、做饭、洗澡、等车、化妆……）就填上大概占多少分钟。这一条决定她接下来多久都「在忙这件事」——程序会用它算出她「正在做这件事」的时间段，这段时间她能继续这件事、能分心想别的，但不能凭空「做完了」。别为了把剧情往前赶就把所有事都写成一瞬间完成。**没填就等于一瞬间做完**——试一件衣服、喝一杯奶茶都不止一秒，这种该填不填的，写出来就像人生被按了快进。
 
 <可填的地点（from / to / place 只能填这里的 id，不要自己造中文地名）>
 ${PLACE_VOCAB}
@@ -216,7 +216,7 @@ export class Narrator {
    * 生成一个回合。
    * @param {{trigger:string, userId:string, now:number, source:string, maxRevision?:number, stage?:object}} opts
    */
-  async run({ trigger, userId, now, source = 'user', maxRevision = 2, stage = null, windowText = '', worldText = '' }) {
+  async run({ trigger, userId, now, source = 'user', maxRevision = 2, stage = null, windowText = '', worldText = '', windowMinutes = null }) {
     const recentProse = this.#recentProse();
     // 最近几段叙事原文。三个用途：
     // ① 取**结尾**当接续起点（给开头只会让它照抄一遍，给结尾它才知道接着往哪走）；
@@ -270,7 +270,7 @@ export class Narrator {
       const verdict = validateDrafts(draft.events, this.timeline, { now, registry: this.registry, persona: this.persona });
       // 散文本身也要过校验：时钟写错、睡眠时段出现清醒活动都算硬矛盾
       const narrV = validateNarration(narration, { at: now, persona: this.persona });
-      const lenV = narrationTooShort(narration, this.persona, now);
+      const lenV = narrationTooShort(narration, this.persona, now, windowMinutes);
       violations = [...verdict.violations, ...narrV, ...lenV];
       const blocking = [...verdict.hard, ...narrV, ...lenV];
       if (blocking.length === 0) {
@@ -539,6 +539,52 @@ const REPLY_MARKER_RE = new RegExp(REPLY_MARKERS.map((m) => m.replace(/[.*+?^${}
  * 既保证严格不倒序，又让时间整体可信；格式统一为 UTC（Z）。
  * move 事件的出发点按新时间重新对齐（时间基准变了，地点也得落到她此刻真实所在地）。
  */
+/** 同一批里两条事件的最小间隔：瞬时动作也至少占 1 秒，不能并列在同一时刻 */
+const MIN_STEP_MS = 1000;
+/** 单批最多向前铺多久：再长就不是「这一段生活」，而是一笔带过一整天 */
+const MAX_BATCH_WINDOW_MS = 240 * 60000;
+
+/**
+ * 把一次「目的地就是她此刻所在地」的 move 降级成原地 act。
+ *
+ * 老实现是把它改成「去 other」。那是错的：人本来在商场，系统把她送到「别处」，
+ * 于是接下来每一条 place=商场 的事件（看衣服、试衣服、结账）全被判 R13「她不在商场」。
+ * 2026-10-31 一次真实推进里就这么连环误报 5 条，模型被反复打回重写。
+ *
+ * 语义上「她已经在这儿，又写了一次来这儿」根本不是位移，只是原地待着。
+ * 所以：不产生行程、不写 arriveAt，地点保持她现在在的地方。
+ */
+function stayInsteadOfMove(e, place, corrections) {
+  const before = `${e.kind}:${e.from ?? '?'}→${e.to ?? e.place ?? '?'}`;
+  e.kind = EventKind.ACT;
+  e.place = place;
+  delete e.from;
+  delete e.to;
+  delete e.mode;
+  delete e.minutes;
+  delete e.legs;
+  delete e.arriveAt;
+  if (!String(e.summary ?? '').trim()) e.summary = `在${PLACE_LABEL[place] ?? place}待着`;
+  corrections.push({
+    rule: 'R2',
+    before,
+    after: `act@${place}`,
+    note: '目的地就是她此刻所在地，已视为原地停留（不产生位移）',
+  });
+}
+
+/**
+ * 时间戳以服务器时钟为准，并按真实占用排布（取代模型自报的时间）。
+ *
+ * 旧实现是 `base = now - (n-1)*1000`：不管 8 条事件分别是什么，一律压进 7 秒。
+ * 这就是「逛商场、上二楼、试衣服、喝奶茶」被挤在几分钟内的直接原因——
+ * 模型写得多细都没用，时间轴上它们本来就是同时发生的。
+ *
+ * 现在的做法（借 HDS-Interlude 的演化窗口）：把本轮要写的事当成一段真实时间的
+ * 占位。每条事件按自己声明的时长推进游标（瞬时动作占 1 秒），整批从
+ * `now - 总占用` 开始；窗口装不下就按比例压缩并留审计。这样「半小时的流程」
+ * 在 8 分钟的窗口里物理上排不下，不用靠校验去拦。
+ */
 export function stampServerTimes(events, timeline, now) {
   const corrections = [];
   const list = Array.isArray(events) ? events : [];
@@ -546,17 +592,50 @@ export function stampServerTimes(events, timeline, now) {
 
   const sim = new Timeline(timeline.events, timeline.startPlace);
   const prevAt = sim.lastAt();
-  const n = list.length;
-  // 最后一条正好落在 now，往前每条退 1 秒；若与本批之前的历史最后一刻撞上，就整体顺延到其后
-  let base = now - (n - 1) * 1000;
-  if (prevAt !== null && base <= prevAt) base = prevAt + 1000;
+
+  // ---- ① 每条事件想占多少真实时间 ----
+  // move 用它报的路程分钟（路网图随后会再校正）；ACT 用 durationMinutes；其余为 0（占位 1 秒）。
+  const wantedMs = (e) => {
+    if (e?.kind === EventKind.MOVE) {
+      const m = Number(e?.minutes);
+      const min = Number.isFinite(m) && m > 0 ? Math.min(m, MAX_DURATION_MIN) : 15;
+      return min * 60000;
+    }
+    const d = Number(e?.durationMinutes);
+    return Number.isFinite(d) && d > 0 ? Math.min(d, MAX_DURATION_MIN) * 60000 : 0;
+  };
+  const want = list.map(wantedMs);
+  const last = list.length - 1;
+
+  // ---- ② 本轮窗口：[上一条之后, now]，再往前最多 4 小时 ----
+  const lower = Math.max(
+    prevAt === null ? Number.NEGATIVE_INFINITY : prevAt + MIN_STEP_MS,
+    now - MAX_BATCH_WINDOW_MS,
+  );
+  // 起点让「**最后一条的开始时刻**」落在 now：这样最后一条持续动作的 span 会盖住
+  // 「此刻」，activityAt(now) 才命中、R15 才有东西可拦。若按「最后一条的结束落在 now」
+  // 对齐，一条 40 分钟的试衣服会被排到 40 分钟前结束，等于她现在刚做完——正好反过来。
+  const priorWanted = list.slice(0, last).reduce((s, _, i) => s + Math.max(want[i], MIN_STEP_MS), 0);
+  const start = Math.max(now - priorWanted, lower);
+  const room = Math.max(0, now - start);
+  // 窗口装不下前面这些事：按比例压缩，保住「谁比谁长」的相对关系，不保住绝对分钟数
+  const scale = priorWanted > 0 && priorWanted > room ? room / priorWanted : 1;
+  if (scale < 1) {
+    corrections.push({
+      rule: 'T',
+      before: `本批内容约 ${Math.round(priorWanted / 60000)} 分钟`,
+      after: `窗口只有 ${Math.round(room / 60000)} 分钟`,
+      note: '演化窗口装不下这么多事，已按比例压缩到窗口内',
+    });
+  }
 
   // 这一批里上一次出发的到达时刻：下一段出行必须从到达之后才开始，不能叠在一起
   let lastArriveAt = Number.NEGATIVE_INFINITY;
+  let cursor = start;
 
   list.forEach((e, i) => {
-    let at = base + i * 1000;
-    applyDuration(e, at);
+    // 任何事件都不许排到 now 之后（写到未来会被 R1 拦，还会让「此刻」错位）
+    let at = Math.min(cursor, now);
     if (e.kind === EventKind.MOVE && Number.isFinite(lastArriveAt) && at < lastArriveAt) {
       corrections.push({
         rule: 'R2', before: toISO(at), after: toISO(lastArriveAt), note: '上一段还没到又出发，已顺延到到达之后',
@@ -566,8 +645,26 @@ export function stampServerTimes(events, timeline, now) {
     const beforeAt = e.at;
     e.at = toISO(at);
     if (beforeAt !== e.at) {
-      corrections.push({ rule: 'T', before: beforeAt, after: e.at, note: '时间以服务器时钟为准' });
+      corrections.push({ rule: 'T', before: beforeAt, after: e.at, note: '按演化窗口排定（不再挤成 1 秒）' });
     }
+
+    // 冗余位移：目的地就是她此刻所在地（模型常把「上三楼」「进店逛」写成一次 move 到 mall，
+    // 可她本来就在 mall）。这里必须是「原地停留」，不能是「改去 other」——
+    // 后者等于凭空造出一次位移，把她送到「别处」，随后所有 place=原地 的事件全被 R13 判错位
+    // （2026-10-31 线上一次推进里就这样连环误报 5 条，模型被反复打回重写）。
+    if (e.kind === EventKind.MOVE) {
+      const here = sim.placeAt(at);
+      const target = e.to ?? e.place;
+      if (target && target === here) {
+        stayInsteadOfMove(e, here, corrections);
+        want[i] = wantedMs(e);
+      }
+    }
+
+    // 这条事件占多久：默认按声明值，move 由路网图算出的真实路程覆盖
+    // 这条事件占多久：默认按声明值，move 由路网图算出的真实路程覆盖。
+    // 最后一条不吃压缩——它的 span 要延伸到 now 之后，才表示「此刻正在进行」。
+    let step = Math.max(i === last ? want[i] : want[i] * scale, MIN_STEP_MS);
 
     if (e.kind === EventKind.MOVE) {
       const actual = sim.placeAt(at);
@@ -576,13 +673,6 @@ export function stampServerTimes(events, timeline, now) {
         e.from = actual;
       }
       let to = e.to ?? e.place;
-      if (to && to === actual) {
-        const before = e.to;
-        e.to = Place.OTHER;
-        if (e.place) e.place = Place.OTHER;
-        corrections.push({ rule: 'R2', before: `to=${before}`, after: 'to=other', note: '目的地与所在地相同，已改为 other' });
-        to = Place.OTHER;
-      }
       // 路程时长：由路网图定，模型给的 minutes 只是参考。
       // 算出 arriveAt 之后，这段路上她一直是 transit——「提前说到站」从此在状态层就不成立。
       if (to) {
@@ -590,13 +680,38 @@ export function stampServerTimes(events, timeline, now) {
         e.mode = plan.mode;
         e.minutes = plan.minutes;
         e.legs = plan.legs;
-        e.arriveAt = toISO(at + plan.minutes * 60000);
-        lastArriveAt = at + plan.minutes * 60000;
+        // 窗口不够时，路程不能把后续事件推到未来——到站时刻压到窗口内并留审计。
+        // 最后一条不受此限：她「此刻出发、30 分钟后才到」是正常状态，R14 就靠这个拦「到了」。
+        let minutes = plan.minutes;
+        if (i < last && at + minutes * 60000 > now + MIN_STEP_MS) {
+          const fit = Math.max(1, Math.floor((now - at) / 60000));
+          corrections.push({
+            rule: 'R2',
+            before: `路程 ${minutes} 分钟`,
+            after: `路程 ${fit} 分钟`,
+            note: '本批窗口装不下这段路，已压到窗口内（下次别在窗口末尾安排长通勤）',
+          });
+          minutes = fit;
+          e.minutes = fit;
+        }
+        e.arriveAt = toISO(at + minutes * 60000);
+        lastArriveAt = at + minutes * 60000;
+        step = minutes * 60000;
         for (const c of plan.corrections) corrections.push({ ...c, note: `[路程] ${c.note}` });
       }
     }
 
+    applyDuration(e, at);
+    // 跨度不能盖到下一件事头上：她开始做下一件事，就说明这件已经做完了。
+    // 不裁的话，压缩后的 22:02「挑猫 16 分钟」会与 22:08「试衣服」重叠，R5 直接判硬矛盾，
+    // 模型被一轮轮打回重写——而这只是排布问题，不该让模型背。
+    if (e.span && Number.isFinite(at)) {
+      const cap = at + step;
+      const to = toMs(e.span.to);
+      if (Number.isFinite(to) && to > cap) e.span.to = toISO(cap);
+    }
     sim.commit([e]);
+    cursor = at + step;
   });
 
   return corrections;
@@ -698,8 +813,8 @@ export function forceCorrect(events, timeline, now) {
       }
       const to = fixed.to ?? fixed.place;
       if (to && to === actual) {
-        corrections.push({ rule: 'R2', before: `to=${to}`, after: 'to=other', note: '目的地与当前位置相同，已改为 other' });
-        fixed.to = Place.OTHER;
+        // 同上：冗余位移按「原地停留」处理，不能改成 other（会把后续同地点事件全判错位）
+        stayInsteadOfMove(fixed, actual, corrections);
       }
     }
 
@@ -714,12 +829,24 @@ export function forceCorrect(events, timeline, now) {
 // 持续动作时长：由模型声明 durationMinutes，程序派生 span（from→to），
 // 状态层（activityAt / R5 跨度重叠）与校验（R15 活动未完）据此接管。
 // 与路网图同一范式：模型声明 + 程序保证，不硬编码时长表 / 白名单。
+//
+// 模型自报的 span **一律丢弃**。线上实测（2026-10-31，4907 条事件）：模型把本地
+// 墙上时间补个 Z 当 UTC 写，18 条带 span 的事件 18 条全部偏 8 小时，span 从不覆盖
+// 它自己的 at —— activityAt 因此永远匹配不到，整套活动时长设施空转。
+// 时区换算这种事不该交给模型，起止时刻只能由 at 算。
 const MAX_DURATION_MIN = 180;
 export function applyDuration(e, at) {
-  if (e?.kind !== EventKind.ACT) return; // 只有「持续动作」才有时长
+  if (!e) return;
+  // 非 ACT 不需要跨度；模型写了也删掉（R5 只认程序派的 span）
+  if (e.kind !== EventKind.ACT) {
+    if ('span' in e) delete e.span;
+    return;
+  }
   const dur = Number(e?.durationMinutes);
-  if (!Number.isFinite(dur) || dur <= 0) return;
+  if (!Number.isFinite(dur) || dur <= 0 || !Number.isFinite(at)) {
+    delete e.span;
+    return;
+  }
   const minutes = Math.min(dur, MAX_DURATION_MIN);
-  const endAt = at + minutes * 60000;
-  e.span = { from: toISO(at), to: toISO(endAt) };
+  e.span = { from: toISO(at), to: toISO(at + minutes * 60000) };
 }

@@ -95,12 +95,15 @@ test('游标: 窗口上界就是 now，不允许演化到未来', () => {
   assert.equal(w.spanMinutes, 180);
 });
 
-test('游标: 窗口说明里明确写出最早/最晚时刻', () => {
+test('游标: 窗口说明给出时间预算，并说明装不下的后果', () => {
   const c = new StoryCursor(NOW - 3600_000);
   const text = c.renderWindow(NOW);
   assert.match(text, /本轮演化窗口/);
-  assert.match(text, /最晚不晚于/);
-  assert.match(text, /绝不允许把「现在」写成更晚/);
+  // 窗口不再只讲「区间」，而是讲「预算」——所有 durationMinutes 加起来不能超过它。
+  // 只给区间不给预算，模型就会把半小时的流程塞进 8 分钟（时间压缩的根）。
+  assert.match(text, /60 分钟是全部时间预算/);
+  assert.match(text, /durationMinutes 加起来不能超过它/);
+  assert.match(text, /装不下的事就别写/);
 });
 
 test('游标: 只前进不后退', () => {

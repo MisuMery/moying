@@ -92,11 +92,20 @@ export function extractClockClaims(text) {
 /**
  * R9 叙事篇幅：散文写得太短就不算叙事，只算流水账。
  * 这是「主动发消息」能不能发生的前提 —— 三句话带过的一段生活里，她不会想起谁。
+ *
+ * 但下限不能是个死数字。HDS-Interlude 的 beta10 就死在这上面，复盘原文：
+ * 「主合约要求每轮 400–700 字自成一体的一幕……**较短的现实窗口同样被填充至目标体量**」。
+ * 一个 5 分钟的窗口写不满 400 字，模型只能靠「多发生几件事」来凑 ——
+ * 这就是时间被压缩的发动机，durationMinutes 只是刹车片。
+ * 所以下限随窗口缩放：每分钟生活约 40 字，最低 120 字。
  */
-export function narrationTooShort(narration, persona, at = Date.now()) {
+export function narrationTooShort(narration, persona, at = Date.now(), windowMinutes = null) {
   const { min } = narrativeLength(persona);
+  const scaled = Number.isFinite(windowMinutes) && windowMinutes > 0
+    ? Math.max(120, Math.round(windowMinutes * 40))
+    : min;
   // 睡眠中的一拍本来就没什么事可写，放宽下限，否则模型为了凑字数会写出清醒活动
-  const floor = sleepState(persona, at).asleep ? 120 : min;
+  const floor = sleepState(persona, at).asleep ? Math.min(120, scaled) : Math.min(min, scaled);
   const n = [...String(narration ?? '')].length;
   if (!n) return [violation('R9', Severity.HARD, '缺少 narration，必须写一段完整的叙事', { length: 0 })];
   if (n < floor) {
@@ -320,11 +329,11 @@ const NOT_YET_ACT = '还在(试|挑|选|喝|吃|逛|等|排|化|做|煮|炖|炒|
   + '|快(试|挑|选|喝|吃|逛|等|排|化|做|煮|炖|炒|洗|看)(完|好)'
   + '|差(不(多|大))?就(完|好)|进行中|到一半|中途';
 
-const DONE_ACT = '试(完|好|完了)|买(完|好|完了)|挑(好|定)|选(好|定)'
-  + '|喝(完)|排到(了)|结(完|好)账|付(完|好)钱'
-  + '|做(完|好)|炒(好|完)|煮(好|完)|炖(好|完)|洗(完|好)'
-  + '|吃(完|好)|看(完|好了)|逛(完|好)|化(完|好)妆'
-  + '|完事了|搞定了';
+const DONE_ACT = '试(完了|好了|完|好)|买(完了|好了|完|好)|挑(好了|好|定)|选(好了|好|定)'
+  + '|喝(上了奶茶|上了|完了|完|好)|排到(了)|结(完了|好了|完|好)账|付(完了|好了|完|好)钱'
+  + '|做(完了|好了|完|好)|炒(好了|好|完)|煮(好了|好|完)|炖(好了|好|完)|洗(完了|好了|完|好)|吃(完了|好了|完|好)'
+  + '|看(完了|好了|完|好)|逛(完了|好了|完|好)|化(完了|好了|完|好)妆|到(三楼|二楼|奶茶店|店里|店门口)'
+  + '|走(出|进)(试衣间|店|商场|屋)|出(门|店)|(试衣间|店|商场)(里|内)出来|完事了|搞定了';
 
 /**
  * 这段文字有没有「这件事做完了」。
@@ -500,11 +509,15 @@ export function validateDrafts(drafts, timeline, ctx = {}) {
           // 硬拦一次要重跑一整轮 story，为一句措辞不值。
           // 只有她自己的话算数：陈哥说「我那份外卖也到了」跟她到没到没关系
           const sp = String(d?.speaker ?? '').trim();
-          const saidByHer = d?.kind === EventKind.SAY && (sp === '' || sp === 'self');
-          violations.push(violation('R14', saidByHer ? Severity.HARD : Severity.SOFT,
-            `第 ${index + 1} 条出现「${claim}」，可她那一刻还在去${label}的路上，还要约 ${j.remainMin} 分钟才到。`
-            + `路上只能写走路、风、车上、同伴说话；到${label}、下车、进门、站在门口这些，等她真到了再写`,
-            { index, claim, to: j.to, remainMin: j.remainMin, saidByHer }));
+          // 别人说的「到了」跟她到没到没关系（陈哥说他那份外卖到了，不代表她到了），直接放行。
+          const othersSay = d?.kind === EventKind.SAY && sp && sp !== 'self';
+          if (!othersSay) {
+            const saidByHer = d?.kind === EventKind.SAY && (sp === '' || sp === 'self');
+            violations.push(violation('R14', saidByHer ? Severity.HARD : Severity.SOFT,
+              `第 ${index + 1} 条出现「${claim}」，可她那一刻还在去${label}的路上，还要约 ${j.remainMin} 分钟才到。`
+              + `路上只能写走路、风、车上、同伴说话；到${label}、下车、进门、站在门口这些，等她真到了再写`,
+              { index, claim, to: j.to, remainMin: j.remainMin, saidByHer }));
+          }
         }
       }
     }

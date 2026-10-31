@@ -346,7 +346,7 @@ export class Engine {
     await this.#serialize(() => {
       // 权威判重：必须与「记已见 + 落库」在同一个串行区里原子完成。
       // 之前的检查在队列外——三条重投几乎同时到（间隔 81ms），都在对方记账之前通过了
-      // 检查，结果同一条消息被存了 3 次（2026-10-27 线上：mid=969461217 ×3）。
+      // 检查，结果同一条消息被存了 3 次（2026-10-27 线上：同一条 mid 被存了 3 次）。
       if (messageId != null) {
         const mid = String(messageId);
         if (this.seenMessageIds.has(mid)) {
@@ -700,6 +700,9 @@ export class Engine {
     const world = await this.narrator.run({
       trigger, userId, now, source, stage,
       windowText: this.cursor.renderWindow(now),
+      // 窗口分钟数一并给到叙事篇幅校验：窗口短就不逼着凑字数，
+      // 否则模型为了填满 400 字只能往这段时间里硬塞事件（时间压缩的发动机）
+      windowMinutes: this.cursor.window(now).spanMinutes,
       // 每日记忆：让她记得今天做过什么、昨天聊过什么（此前跨半天就断片）
       worldText: [renderWorldSetting(), '', renderStoryRequirement(), '',
         renderDigest(buildDailyDigest(this.store.loadEvents(), now, { nameOf: nameResolver(this.registry) }))].filter(Boolean).join('\n'),

@@ -152,6 +152,6 @@ test('R15: 过程中说法（还在试 / 喝了一半）不触发', () => {
 test('renderCurrentFacts: 进行中活动出现提示文案', () => {
   const { tl, at } = timelineWithActivity(0, 20);
   const out = renderCurrentFacts(tl, at + 5 * 60000);
-  assert.match(out, /正在.*做「试衣服」/, '应渲染正在做某事');
+  assert.match(out, /正在试衣服/, '应渲染正在做某事');
   assert.match(out, /还有.*分钟才完/, '应给出剩余时间');
 });

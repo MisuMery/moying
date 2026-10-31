@@ -125,14 +125,19 @@ export function renderCurrentFacts(timeline, now, opts = {}) {
     const all = timeline.eventsOnDate ? timeline.eventsOnDate(fmtDate(now)) : [];
     last = [...all].reverse().find((e) => !isChatLine(e)) ?? null;
   }
+  const act = typeof timeline.activityAt === 'function' ? timeline.activityAt(now) : null;
+  // 正在做某件事时，地点以那件事自己声明的地点为准：时间轴上她可能还停在 other
+  // （这一批没写 move），但事件说了在商场——「她在别处」+「在商场还有 10 分钟」两行
+  // 自相矛盾，模型只会挑一句信，然后写歪。
+  const shownPlace = act?.place ?? place;
   const lines = [
     // 带上「几号 + 星期几」：模型没有日历，只给 09:56 它会自己推日期，
     // 于是把「昨天说的」说成「上周说的」（2026-10-29 线上事故）。锚点给足，就不会瞎算。
     `>>> 现在 ${fmtDate(now)} ${WEEKDAY_LABEL[localWeekday(now)] ?? ''} ${fmtClock(now)}`,
-    `当前事实: 她在${PLACE_LABEL[place] ?? place}${companions.length ? `，和 ${companions.join('、')} 在一起` : '，独自一人'}。`,
+    `当前事实: 她在${PLACE_LABEL[shownPlace] ?? shownPlace}${companions.length ? `，和 ${companions.join('、')} 在一起` : '，独自一人'}。`,
     renderJourney(timeline, now),
-    renderActivity(timeline, now),
-    FORBIDDEN_BY_PLACE[place] ?? '',
+    renderActivity(act),
+    FORBIDDEN_BY_PLACE[shownPlace] ?? '',
     last ? `最近一件事: ${cut(String(last.summary ?? last.prose ?? '').replace(/\s+/g, ' '), 40)}` : '',
   ].filter(Boolean);
   return lines.join('\n');
@@ -159,14 +164,19 @@ function renderJourney(timeline, now) {
 /**
  * 正在做某件持续动作时，写清「这件事还要做多久」。
  * 与 renderJourney 同一思路：这是程序按 span 算出的事实，模型不能提前宣称做完。
+ * @param {{activity:string, place:string, remainMin:number}|null} a
  */
-function renderActivity(timeline, now) {
-  const a = typeof timeline.activityAt === 'function' ? timeline.activityAt(now) : null;
+function renderActivity(a) {
   if (!a) return '';
-  const label = String(a.activity ?? '做事').split('/')[0].replace(/（[^）]*）/g, '').trim() || '做事';
-  const placeLabel = String(PLACE_LABEL[a.place] ?? a.place);
-  return `她正在${placeLabel}做「${label}」，约还有 ${a.remainMin} 分钟才完——`
-    + `这期间她在做这件事：可以说还在试、还在挑、喝了一半、排队等着；`
+  // summary 常是一整句（「两人在商场里慢慢逛，林夏看衣服，她在旁边站着」），
+  // 直接接在「她正在」后面会读成「她正在两人在商场里慢慢逛」。取第一个分句、剥掉主语前缀。
+  const raw = String(a.activity ?? '做事');
+  let label = raw.split(/[，,。；;]/)[0].trim().replace(/^(两人|她们|他们|她|他|我)在?/, '').trim();
+  if (!label) label = raw.slice(0, 14);
+  const placeLabel = String(PLACE_LABEL[a.place] ?? a.place ?? '');
+  const where = placeLabel ? `（在${placeLabel}，还有 ${a.remainMin} 分钟才完）` : `（还有 ${a.remainMin} 分钟才完）`;
+  return `她正在${label}${where}——`
+    + `这期间她就在做这件事：可以说还在试、还在挑、喝了一半、排队等着；`
     + `不能说已经试完了、买好了、喝完了、排到了、结账了——做没做完由时间算，时间没到就还在做。`
     + `这会儿要给他发消息，也只能说正在做这件事，说「做完了」会被打回重写。`;
 }
