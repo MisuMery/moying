@@ -26,6 +26,7 @@ const RULES = {
   R12: '同住边界',
   R13: '行程一致',
   R14: '途中未抵达',
+  R15: '活动未完',
 };
 
 /** 时钟容差：模型常把时间写到整秒/整分，比毫秒级的真实记录早零点几秒；
@@ -33,7 +34,7 @@ const RULES = {
 const CLOCK_TOLERANCE_MS = 1000;
 
 /** 硬矛盾：必须拒绝重生成；软矛盾：自动补字段并留痕 */
-const HARD_RULES = new Set(['R1', 'R2', 'R5', 'R7', 'R8', 'R10', 'R11', 'R12', 'R13', 'R14']);
+const HARD_RULES = new Set(['R1', 'R2', 'R5', 'R7', 'R8', 'R10', 'R11', 'R12', 'R13', 'R14', 'R15']);
 
 // ---------- 睡眠时段：这段时间里只能有睡眠中极细微的事 ----------
 
@@ -304,6 +305,44 @@ export function findArrivalClaim(text, toPlace) {
   return '';
 }
 
+// ---------- R15 的用词判定 ----------
+//
+// 与 R14 同一思路：活动做没做完只在措辞里，字段看不出来——summary 都是「试衣服」，
+// 但一句「试完了」就让她凭空把 20 分钟压成了 2 秒。所以这里只看话，不看字段。
+//
+// 两段正则分工：
+//   NOT_YET_ACT = 过程中该说的（还在试 / 喝了一半 / 排队等着）——先剔掉，剔完剩下的才算嫌疑
+//   DONE_ACT    = 做完该说的（试完了 / 买好了 / 喝完了 / 排到了 / 结账了）
+// 只判「她自己正在做某件事时又宣称做完」：没活动在身时不触发，避免误伤。
+const NOT_YET_ACT = '还在(试|挑|选|喝|吃|逛|等|排|化|做|煮|炖|炒|洗|看)'
+  + '|正在(试|挑|选|喝|吃|逛|等|排|化|做|煮|炖|炒|洗|看)'
+  + '|(试|挑|选|喝|吃|逛|等|排|化|做|煮|炖|炒|洗|看)了(一半|几口|一些|几件|几样|一会)'
+  + '|快(试|挑|选|喝|吃|逛|等|排|化|做|煮|炖|炒|洗|看)(完|好)'
+  + '|差(不(多|大))?就(完|好)|进行中|到一半|中途';
+
+const DONE_ACT = '试(完|好|完了)|买(完|好|完了)|挑(好|定)|选(好|定)'
+  + '|喝(完)|排到(了)|结(完|好)账|付(完|好)钱'
+  + '|做(完|好)|炒(好|完)|煮(好|完)|炖(好|完)|洗(完|好)'
+  + '|吃(完|好)|看(完|好了)|逛(完|好)|化(完|好)妆'
+  + '|完事了|搞定了';
+
+/**
+ * 这段文字有没有「这件事做完了」。
+ * 注意：只判她自己的宣称，引述别人（陈哥说他那份外卖也到了）或问句（试完了吗）一律放行。
+ * @param {string} text 事件的 summary + prose
+ * @returns {string} 命中的说法，没命中返回空串
+ */
+export function findActivityDone(text) {
+  const s = String(text ?? '');
+  if (!s.trim()) return '';
+  if (/^\s*(收到消息|他发来|他说|他问|他：|他\s|林夏|陈哥|室友|同事)/.test(s)) return '';
+  if (/(吗|呢)\s*[。？?]?\s*$/.test(s) && /(完|好|了)/.test(s)) return '';
+  const stripped = s.replace(new RegExp(NOT_YET_ACT, 'g'), ' ');
+  const hit = stripped.match(new RegExp(DONE_ACT));
+  if (hit) return hit[0];
+  return '';
+}
+
 function violation(rule, severity, message, extra = {}) {
   return { rule, ruleName: RULES[rule], severity, message, ...extra };
 }
@@ -466,6 +505,36 @@ export function validateDrafts(drafts, timeline, ctx = {}) {
             `第 ${index + 1} 条出现「${claim}」，可她那一刻还在去${label}的路上，还要约 ${j.remainMin} 分钟才到。`
             + `路上只能写走路、风、车上、同伴说话；到${label}、下车、进门、站在门口这些，等她真到了再写`,
             { index, claim, to: j.to, remainMin: j.remainMin, saidByHer }));
+        }
+      }
+    }
+
+    // R15 活动未完 —— R14 的同构规则，把「地点」换成「活动」。
+    // 2026-10-31 事故（续）：刚写完「试衣服」下一秒就「试完了」，
+    // 「说去喝奶茶」两分钟后就「捧着奶茶」，时间被压成无时长点事件。
+    // 持续动作由 applyDuration 派生 span，这段时间里她「正在做这件事」：
+    // 可以说还在试、喝了一半；不能说做完了——做没做完由 span 算，时间没到就还在做。
+    // 与路网图 / R14 同一范式：模型声明 durationMinutes，程序保证，不硬编码时长表。
+    if (d?.kind !== EventKind.MOVE) {
+      const a = typeof sim.activityAt === 'function' ? sim.activityAt(at) : null;
+      if (a && a.remainMin >= 1) {
+        const done = findActivityDone(`${String(d?.summary ?? '')} ${String(d?.prose ?? '')}`);
+        if (done) {
+          const sp = String(d?.speaker ?? '').trim();
+          // 别人说的「做完了」跟她做没做完没关系，放行。
+          const othersSay = d?.kind === EventKind.SAY && sp && sp !== 'self';
+          if (!othersSay) {
+            // 她亲口对他说「试完了」是硬拦（他会当真）；
+            // 她自己在事件里把事实写成「试完了」（ACT）也是硬拦（状态会记成已做完）。
+            // 旁白里一句修辞降成 soft 记一笔，不阻断生成。
+            const saidByHer = d?.kind === EventKind.SAY && (sp === '' || sp === 'self');
+            const isHers = saidByHer || d?.kind === EventKind.ACT;
+            const label = String(a.activity ?? '做事').slice(0, 12);
+            violations.push(violation('R15', isHers ? Severity.HARD : Severity.SOFT,
+              `第 ${index + 1} 条出现「${done}」，可她此刻还在做「${label}」，约还有 ${a.remainMin} 分钟才完。`
+              + `做没做完由时间算，时间没到就还在做——把这句改成「还在试/还在挑/喝了一半/排队等着」`,
+              { index, done, activity: a.activity, remainMin: a.remainMin, saidByHer }));
+          }
         }
       }
     }

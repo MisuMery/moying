@@ -131,6 +131,7 @@ export function renderCurrentFacts(timeline, now, opts = {}) {
     `>>> 现在 ${fmtDate(now)} ${WEEKDAY_LABEL[localWeekday(now)] ?? ''} ${fmtClock(now)}`,
     `当前事实: 她在${PLACE_LABEL[place] ?? place}${companions.length ? `，和 ${companions.join('、')} 在一起` : '，独自一人'}。`,
     renderJourney(timeline, now),
+    renderActivity(timeline, now),
     FORBIDDEN_BY_PLACE[place] ?? '',
     last ? `最近一件事: ${cut(String(last.summary ?? last.prose ?? '').replace(/\s+/g, ' '), 40)}` : '',
   ].filter(Boolean);
@@ -153,6 +154,21 @@ function renderJourney(timeline, now) {
     + `${fmtClock(j.arriveAt)} 才到${label}——这期间她只在路上：`
     + `可以说还有几站、快到了、再走几分钟；不能说已经到了、下车了、进${label}、站在${label}门口。`
     + `这会儿要是给他发消息，也只能说在路上，说「到了」会被打回重写。`;
+}
+
+/**
+ * 正在做某件持续动作时，写清「这件事还要做多久」。
+ * 与 renderJourney 同一思路：这是程序按 span 算出的事实，模型不能提前宣称做完。
+ */
+function renderActivity(timeline, now) {
+  const a = typeof timeline.activityAt === 'function' ? timeline.activityAt(now) : null;
+  if (!a) return '';
+  const label = String(a.activity ?? '做事').split('/')[0].replace(/（[^）]*）/g, '').trim() || '做事';
+  const placeLabel = String(PLACE_LABEL[a.place] ?? a.place);
+  return `她正在${placeLabel}做「${label}」，约还有 ${a.remainMin} 分钟才完——`
+    + `这期间她在做这件事：可以说还在试、还在挑、喝了一半、排队等着；`
+    + `不能说已经试完了、买好了、喝完了、排到了、结账了——做没做完由时间算，时间没到就还在做。`
+    + `这会儿要给他发消息，也只能说正在做这件事，说「做完了」会被打回重写。`;
 }
 
 /** 时间轴 + 当前事实，合成注入块 */

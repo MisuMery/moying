@@ -214,6 +214,33 @@ export class Timeline {
   }
 
   /**
+   * 此刻她是否正在做某件「持续动作」（试衣服 / 喝奶茶 / 逛店 / 排队……）。
+   * 仅看带 span（from→to）的 ACT 事件；span 由 applyDuration 从模型声明的
+   * durationMinutes 派生。命中返回该活动与其剩余分钟数，否则 null。
+   * @returns {{activity:string, place:string, startAt:number, endAt:number, remainMin:number}|null}
+   */
+  activityAt(ms = Date.now()) {
+    let last = null;
+    for (const e of this.events) {
+      if (e.kind !== EventKind.ACT) continue;
+      const f = toMs(e.span?.from);
+      const t = toMs(e.span?.to);
+      if (!Number.isFinite(f) || !Number.isFinite(t) || t <= f) continue;
+      if (ms >= f && ms < t) last = e;
+    }
+    if (!last) return null;
+    const f = toMs(last.span.from);
+    const t = toMs(last.span.to);
+    return {
+      activity: String(last.summary ?? last.place ?? '做事'),
+      place: last.place ?? this.placeAt(ms),
+      startAt: f,
+      endAt: t,
+      remainMin: Math.max(1, Math.ceil((t - ms) / 60000)),
+    };
+  }
+
+  /**
    * 某一天的全部事件。
    * 不能拿 at 字符串的前 10 位来比：引擎自己写的事件是 UTC（…Z），
    * 北京时间凌晨 0~8 点的那些会被算到前一天去——而她偏偏是个夜猫子，

@@ -43,7 +43,8 @@ export const CONTRACT = `你必须只输出一个 JSON 对象，不要有任何�
       "actors": ["c:roommate"],
       "span": { "from": "...", "to": "..." },
       "remote": false,
-      "summary": "一句话摘要（会进入时间轴，务必简短）"
+      "summary": "一句话摘要（会进入时间轴，务必简短）",
+      "durationMinutes": "持续动作才需要：这件事大概占用多少真实分钟（试衣服/喝奶茶/逛店/排队/做饭/洗澡/等车/化妆……）。瞬时动作（说一句、看一眼、拿起手机）不填或填 0。按真实生活估，别为了赶剧情写短。"
     }
   ]
 }
@@ -74,6 +75,8 @@ narration 与 events 的分工（不要搞反）：
 - **事件的 at 只是参考，落库时程序一律以服务器当前时间为准重打，你不必精确估时；格式用 UTC（结尾 Z），不要写 +08:00。**
 - **事件时间写到分钟即可**（不要带秒）；会比下面给的「此刻」早零点几秒不算倒流，程序按同一时刻处理，不用紧张。
 - move 只用于**她自己**的位移（同行的其他人写进 actors，她自己不用写）；其他角色的移动用 act 表达，place 填该角色此刻所在的地方（例：「室友出门上班」→ kind=act、actors=["c:roommate"]、place="office"）。
+
+**持续动作要带 durationMinutes（事件里的数字字段）**：只要是一段需要时间的事（试衣服、喝奶茶、逛街、排队、做饭、洗澡、等车、化妆……）就填上大概占多少分钟。这一条决定她接下来多久都「在忙这件事」——程序会用它算出她「正在做这件事」的时间段，这段时间她能继续这件事、能分心想别的，但不能凭空「做完了」。别为了把剧情往前赶就把所有事都写成一瞬间完成。
 
 <可填的地点（from / to / place 只能填这里的 id，不要自己造中文地名）>
 ${PLACE_VOCAB}
@@ -553,6 +556,7 @@ export function stampServerTimes(events, timeline, now) {
 
   list.forEach((e, i) => {
     let at = base + i * 1000;
+    applyDuration(e, at);
     if (e.kind === EventKind.MOVE && Number.isFinite(lastArriveAt) && at < lastArriveAt) {
       corrections.push({
         rule: 'R2', before: toISO(at), after: toISO(lastArriveAt), note: '上一段还没到又出发，已顺延到到达之后',
@@ -699,9 +703,23 @@ export function forceCorrect(events, timeline, now) {
       }
     }
 
+    applyDuration(fixed, at);
     out.push(fixed);
     sim.commit([fixed]);
     prevAt = at;
   }
   return { events: out, corrections };
+}
+
+// 持续动作时长：由模型声明 durationMinutes，程序派生 span（from→to），
+// 状态层（activityAt / R5 跨度重叠）与校验（R15 活动未完）据此接管。
+// 与路网图同一范式：模型声明 + 程序保证，不硬编码时长表 / 白名单。
+const MAX_DURATION_MIN = 180;
+export function applyDuration(e, at) {
+  if (e?.kind !== EventKind.ACT) return; // 只有「持续动作」才有时长
+  const dur = Number(e?.durationMinutes);
+  if (!Number.isFinite(dur) || dur <= 0) return;
+  const minutes = Math.min(dur, MAX_DURATION_MIN);
+  const endAt = at + minutes * 60000;
+  e.span = { from: toISO(at), to: toISO(endAt) };
 }
